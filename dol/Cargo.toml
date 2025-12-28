@@ -1,7 +1,6 @@
 [package]
-name = "ppc32"
+name = "dol"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-paste = "1.0.15"

@@ -41,9 +41,3 @@ impl<'a> Decoder<'a> {
         self.decode_from_word(word)
     }
 }
-
-#[test]
-fn test_powerpc() {
-    let ins = powerpc::Ins::new(0x7c0802a6, powerpc::Extensions::gekko_broadway());
-    dbg!(ins, ins.simplified().to_string(), ins.basic().to_string());
-}
