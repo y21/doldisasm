@@ -3,7 +3,7 @@ use std::fs;
 use anyhow::{Context, anyhow, bail, ensure};
 use dol::Dol;
 
-use crate::args::Args;
+use crate::args::{AddrRange, AddrRangeEnd, Args};
 
 mod args;
 mod disasm;
@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(addr)
         } else if entrypoint {
-            Ok(dol.entrypoint())
+            Ok(AddrRange(dol.entrypoint(), AddrRangeEnd::Unbounded))
         } else {
             bail!("either -x <address> or --entrypoint must be provided");
         }

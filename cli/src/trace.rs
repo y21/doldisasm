@@ -5,8 +5,10 @@ use ppc32::{
     instruction::{AddressingMode, Instruction},
 };
 
-pub fn trace(dol: &Dol, start_addr: u32) -> anyhow::Result<()> {
-    let mut queue = vec![start_addr];
+use crate::args::AddrRange;
+
+pub fn trace(dol: &Dol, start_addr: AddrRange) -> anyhow::Result<()> {
+    let mut queue = vec![start_addr.0];
 
     while let Some(address) = queue.pop() {
         println!("\n--- Decoding {:#x}---", address);

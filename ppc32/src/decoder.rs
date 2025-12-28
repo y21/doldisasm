@@ -31,6 +31,10 @@ impl<'a> Decoder<'a> {
         self.offset
     }
 
+    pub fn offset_u32(&self) -> u32 {
+        self.offset as u32
+    }
+
     pub fn decode_instruction(&mut self) -> Result<Instruction, DecodeError> {
         let Some(word) = self.word() else {
             return Err(DecodeError::UnexpectedEof {

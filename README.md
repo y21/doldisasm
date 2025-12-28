@@ -1,14 +1,16 @@
 # `./doldisasm`
 
-A very cool work in progress GCN/Wii DOL disassembler/decompiler.
+A very cool (WIP) GCN/Wii DOL disassembler/decompiler.
 
-### features
+### Features
 - [Print DOL headers and sections](#dol-headers-and-sections)
 - [Disassemble a function's assembly](#disassemble-a-functions-assembly)
-- TODO: [decompile a function and try to output corresponding C code](#decompile-a-function-into-c-code)
+- Todo: decompile a function into C code
 
-### examples
-These examples assume a `input.dol` file exists in the directory being the DOL to disassemble, as well as a binary called `doldisasm` obtained by compiling the `cli` Rust package in this repository (run: `cargo b -p cli -r`, the binary can be found in `./target/release/doldisasm`).
+### Building
+Make sure you have the latest version of Rust and run `cargo b -r -p cli` at the root of this project. You should end up with a binary at `./target/release/doldisasm`.
+
+### Examples
 
 #### DOL headers and sections
 ```
@@ -24,11 +26,13 @@ Section #7: file offset 0x190ac0, load address 0x801949c0, size 0x95940
 ```
 
 #### disassemble a function's assembly
-Let's assume that I know that there's a function to be loaded at 0x80008090 and I want to see its assembly. Use `-x` to specify the start address and `--disasm asm` to output assembly.
-`--entrypoint` can be used in place of `-x` to use the DOLs entrypoint.
-> **NOTE:** since the end of a function is not very clearly defined in a stream of instructions, this command may very well decode and print past the end of the function. Although it is planned to try to "guess" it later
+Let's assume there is a function to be loaded at 0x80008090. Use `-x <start>:<end>` to specify the address range and `--disasm asm` to output assembly. The `<end>` can be left out to "guess" the end of the function via heuristics (e.g. `-x 80008090:`).
+
+Instead of an address for `<end>`, you can also specify a length, e.g. `-x 80008090:+16` would mean start at 0x80008090 and decode 16 bytes (4 instructions).
+
+This example uses an unbounded end to guess the end of the function.
 ```
-$ ./doldisasm -i input.dol -x 0x80008090 --disasm asm
+$ ./doldisasm -i input.dol -x 0x80008090: --disasm asm
 
 0x80008090 Stwu { source: Register(1), dest: Register(1), imm: Immediate(-32) }
 0x80008094 Mfspr { dest: Register(0), spr: Lr }
@@ -61,6 +65,3 @@ $ powerpc-eabi-objdump input.elf --disassemble | grep 80008090 -A100
 (note that objdump displays simplified mnemonics, so even though one says 'mtlr r0' while the other says 'mtspr lr r0', they are still essentially saying the same thing)
 </details>
 
-
-#### decompile a function into C code
-This isn't implemented yet but the plan is after parsing the instructions, we try to recognize patterns like backjumps (which are likely loops) and reconstruct those patterns into C code, to get a higher level idea of what a function is doing
