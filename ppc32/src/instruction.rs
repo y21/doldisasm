@@ -147,6 +147,26 @@ define_instructions! {
             l: bool = |word| word.bit::<10>() != 0
         }
     },
+    Cmpl {
+        op: EXTENDED_OPCODE,
+        xform_op: 0b100000,
+        {
+            source_a: Register = |word| Register(word.u8::<11, 15>()),
+            source_b: Register = |word| Register(word.u8::<16, 20>()),
+            crf: Register = |word| Register(word.u8::<6, 8>()),
+            l: bool = |word| word.bit::<10>() != 0
+        }
+    },
+    Cmp {
+        op: EXTENDED_OPCODE,
+        xform_op: 0,
+        {
+            source_a: Register = |word| Register(word.u8::<11, 15>()),
+            source_b: Register = |word| Register(word.u8::<16, 20>()),
+            crf: Register = |word| Register(word.u8::<6, 8>()),
+            l: bool = |word| word.bit::<10>() != 0
+        }
+    },
     Bc {
         op: 0b010000,
         {
@@ -172,6 +192,15 @@ define_instructions! {
             source: Register = |word| Register(word.u8::<6, 10>()),
             dest: Register = |word| Register(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
+        }
+    },
+    Stwux {
+        op: EXTENDED_OPCODE,
+        xform_op: 0b10110111,
+        {
+            source: Register = |word| Register(word.u8::<6, 10>()),
+            dest: Register = |word| Register(word.u8::<11, 15>()),
+            index: Register = |word| Register(word.u8::<16, 20>())
         }
     },
     Subf {
@@ -225,6 +254,15 @@ define_instructions! {
             rc: bool = |word| word.bit::<31>() != 0
         }
     },
+    And {
+        op: EXTENDED_OPCODE,
+        xform_op: 0b11100,
+        {
+            source1: Register = |word| Register(word.u8::<6, 10>()),
+            source2: Register = |word| Register(word.u8::<16, 20>()),
+            dest: Register = |word| Register(word.u8::<11, 15>())
+        }
+    },
     Stw {
         op: 0b100100,
         {
@@ -243,6 +281,14 @@ define_instructions! {
     },
     Lwz {
         op: 0b100000,
+        {
+            dest: Register = |word| Register(word.u8::<6, 10>()),
+            source: Register = |word| Register(word.u8::<11, 15>()),
+            imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
+        }
+    },
+    Lwzu {
+        op: 0b100001,
         {
             dest: Register = |word| Register(word.u8::<6, 10>()),
             source: Register = |word| Register(word.u8::<11, 15>()),
@@ -293,6 +339,44 @@ define_instructions! {
         {
             dest: Register = |word| Register(word.u8::<6, 10>()),
             tbr: TimeBaseRegister = TimeBaseRegister::from_word
+        }
+    },
+    Lhz {
+        op: 0b101000,
+        {
+            dest: Register = |word| Register(word.u8::<6, 10>()),
+            source: Register = |word| Register(word.u8::<11, 15>()),
+            imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
+        }
+    },
+    Neg {
+        op: EXTENDED_OPCODE,
+        xform_op: 0b1101000,
+        {
+            dest: Register = |word| Register(word.u8::<6, 10>()),
+            source: Register = |word| Register(word.u8::<11, 15>()),
+            rc: bool = |word| word.bit::<31>() != 0,
+            oe: bool = |word| word.bit::<21>() != 0
+        }
+    },
+    Crxor {
+        op: 0b010011,
+        xform_op: 0b11000001,
+        {
+            crb_dest: Register = |word| Register(word.u8::<6, 10>()),
+            crb_a: Register = |word| Register(word.u8::<11, 15>()),
+            crb_b: Register = |word| Register(word.u8::<16, 20>())
+        }
+    },
+    Add {
+        op: EXTENDED_OPCODE,
+        xform_op: 0b100001010,
+        {
+            dest: Register = |word| Register(word.u8::<6, 10>()),
+            source_a: Register = |word| Register(word.u8::<11, 15>()),
+            source_b: Register = |word| Register(word.u8::<16, 20>()),
+            oe: bool = |word| word.bit::<21>() != 0,
+            rc: bool = |word| word.bit::<31>() != 0
         }
     }
 }
