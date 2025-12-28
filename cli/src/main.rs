@@ -6,40 +6,9 @@ use dol::Dol;
 use crate::args::{AddrRange, AddrRangeEnd, Args};
 
 mod args;
+mod decoder;
 mod disasm;
 mod trace;
-
-fn print_headers(dol: &Dol) -> anyhow::Result<()> {
-    println!("BSS address: {:#x}", dol.bss_address());
-    println!("BSS size: {:#x}", dol.bss_size());
-    println!("Entrypoint: {:#x}\n", dol.entrypoint());
-
-    Ok(())
-}
-
-fn print_sections(dol: &Dol) -> anyhow::Result<()> {
-    let mut zero_filtered = 0;
-
-    for (i, section) in dol.sections().enumerate() {
-        if section.empty() {
-            zero_filtered += 1;
-        } else {
-            println!(
-                "Section #{}: file offset {:#x}, load address {:#x}, size {:#x}",
-                i, section.file_offset, section.load_offset, section.size
-            );
-        }
-    }
-
-    if zero_filtered > 0 {
-        println!(
-            "(Note: {} sections with size 0 were omitted)",
-            zero_filtered
-        );
-    }
-
-    Ok(())
-}
 
 fn main() -> anyhow::Result<()> {
     let Args {
@@ -93,6 +62,38 @@ fn main() -> anyhow::Result<()> {
 
     if !did_anything {
         eprintln!("No action specified!");
+    }
+
+    Ok(())
+}
+
+fn print_headers(dol: &Dol) -> anyhow::Result<()> {
+    println!("BSS address: {:#x}", dol.bss_address());
+    println!("BSS size: {:#x}", dol.bss_size());
+    println!("Entrypoint: {:#x}\n", dol.entrypoint());
+
+    Ok(())
+}
+
+fn print_sections(dol: &Dol) -> anyhow::Result<()> {
+    let mut zero_filtered = 0;
+
+    for (i, section) in dol.sections().enumerate() {
+        if section.empty() {
+            zero_filtered += 1;
+        } else {
+            println!(
+                "Section #{}: file offset {:#x}, load address {:#x}, size {:#x}",
+                i, section.file_offset, section.load_offset, section.size
+            );
+        }
+    }
+
+    if zero_filtered > 0 {
+        println!(
+            "(Note: {} sections with size 0 were omitted)",
+            zero_filtered
+        );
     }
 
     Ok(())

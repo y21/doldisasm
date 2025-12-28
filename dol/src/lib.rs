@@ -49,6 +49,11 @@ impl Dol {
         if bytes.len() < 0xFF {
             return Err(".dol file smaller than 255 bytes (does not contain all headers)");
         }
+
+        if bytes.len() > (1 << 32) {
+            return Err(".dol file larger than 4 GiB (file size exceeds u32)");
+        }
+
         Ok(Self(bytes))
     }
 
@@ -88,5 +93,11 @@ impl Dol {
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn slice_from_load_addr(&self, addr: u32) -> Option<&[u8]> {
+        let section = self.section_of_load_addr(addr)?;
+        let off = section.file_offset_of_addr(addr);
+        Some(&self.0[off as usize..])
     }
 }

@@ -1,5 +1,3 @@
-//! Reference used: https://www.nxp.com/docs/en/reference-manual/MPC82XINSET.pdf
-
 use crate::{instruction::Instruction, word::Word};
 
 #[derive(Debug)]

@@ -27,7 +27,7 @@ impl AddressingMode {
 macro_rules! define_instructions {
     ($($name:ident { $(op: $op:expr,)? $(xform_op: $xform_op:expr ,)? { $( $field:ident: $ty:ty = $decode:expr ),* } }),*) => {
         paste! {
-            #[derive(Debug)]
+            #[derive(Debug, Copy, Clone)]
             pub enum Instruction {
                 $(
                     $name {
@@ -35,6 +35,8 @@ macro_rules! define_instructions {
                     },
                 )*
             }
+            const _: [(); 12] = [(); size_of::<Instruction>()];
+
             fn __assert_decode_fn<T: FnOnce(Word) -> R, R>(t: T) -> T { t }
 
             impl Instruction {
@@ -349,6 +351,14 @@ define_instructions! {
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
+    Lbz {
+        op: 0b100010,
+        {
+            dest: Register = |word| Register(word.u8::<6, 10>()),
+            source: Register = |word| Register(word.u8::<11, 15>()),
+            imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
+        }
+    },
     Neg {
         op: EXTENDED_OPCODE,
         xform_op: 0b1101000,
@@ -381,7 +391,21 @@ define_instructions! {
     }
 }
 
-#[derive(Debug)]
+impl Instruction {
+    pub fn branch_target(&self, instr_addr: u32) -> Option<u32> {
+        match self {
+            Instruction::Branch { target, mode, .. } => {
+                Some(compute_branch_target(instr_addr, *mode, *target))
+            }
+            Instruction::Bc { target, mode, .. } => {
+                Some(compute_branch_target(instr_addr, *mode, *target))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum SpecialPurposeRegister {
     Xer,
     Lr,
@@ -400,7 +424,7 @@ impl SpecialPurposeRegister {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum BranchOptions {
     DecCTRBranchIfFalse,
     BranchIfFalse,
@@ -434,7 +458,7 @@ impl BranchOptions {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum TimeBaseRegister {
     /// Upper Time Base
     Tbu,
@@ -449,5 +473,12 @@ impl TimeBaseRegister {
             269 => TimeBaseRegister::Tbl,
             other => panic!("invalid TBR register code: {} (word: {word:x?})", other),
         }
+    }
+}
+
+pub fn compute_branch_target(base: u32, mode: AddressingMode, target: i32) -> u32 {
+    match mode {
+        AddressingMode::Absolute => target as u32,
+        AddressingMode::Relative => base.checked_add_signed(target).unwrap(),
     }
 }

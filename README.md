@@ -25,7 +25,7 @@ Section #7: file offset 0x190ac0, load address 0x801949c0, size 0x95940
 (Note: 16 sections with size 0 were omitted)
 ```
 
-#### disassemble a function's assembly
+#### Disassemble a function's assembly
 Let's assume there is a function to be loaded at 0x80008090. Use `-x <start>:<end>` to specify the address range and `--disasm asm` to output assembly. The `<end>` can be left out to "guess" the end of the function via heuristics (e.g. `-x 80008090:`).
 
 Instead of an address for `<end>`, you can also specify a length, e.g. `-x 80008090:+16` would mean start at 0x80008090 and decode 16 bytes (4 instructions).

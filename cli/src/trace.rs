@@ -1,70 +1,45 @@
+use crate::{
+    args::{AddrRange, AddrRangeEnd},
+    decoder::Decoder,
+};
 use anyhow::Context;
 use dol::Dol;
-use ppc32::{
-    decoder::Decoder,
-    instruction::{AddressingMode, Instruction},
-};
-
-use crate::args::AddrRange;
 
 pub fn trace(dol: &Dol, start_addr: AddrRange) -> anyhow::Result<()> {
-    let mut queue = vec![start_addr.0];
+    let mut queue = vec![start_addr];
 
-    while let Some(address) = queue.pop() {
-        println!("\n--- Decoding {:#x}---", address);
+    while let Some(address @ AddrRange(start_addr, _)) = queue.pop() {
+        let buffer = dol
+            .slice_from_load_addr(start_addr)
+            .with_context(|| format!("address {start_addr:#x} is not part of any section"))?;
 
-        let section = dol
-            .section_of_load_addr(address)
-            .context("failed to find section of address")?;
-
-        let file_offset = section.file_offset_of_addr(address);
-        let buffer = &dol.as_bytes()[file_offset as usize..];
-
-        let mut decoder = Decoder::new(buffer);
+        let mut decoder = Decoder::new(buffer, address);
 
         let mut jumps = Vec::new();
+        let mut last_addr = start_addr;
 
         loop {
-            let offset = decoder.offset();
-            let instruction_address = address + offset as u32;
+            match decoder.next_instruction_with_offset() {
+                Ok(Some((ins_addr, ins))) => {
+                    last_addr = ins_addr;
 
-            match decoder.decode_instruction() {
-                Ok(instruction) => {
-                    print!("{instruction_address:#x} {instruction:?}");
+                    println!("{ins_addr:#x} {ins:?}");
 
-                    if let Instruction::Branch {
-                        target,
-                        mode,
-                        link: _,
-                    } = instruction
-                    {
-                        let abs_target = match mode {
-                            AddressingMode::Absolute => target as u32,
-                            AddressingMode::Relative => (address + offset as u32)
-                                .checked_add_signed(target)
-                                .unwrap(),
-                        };
-
-                        print!(" ({abs_target:#x})");
-
-                        jumps.push(abs_target);
+                    if let Some(target) = ins.branch_target(ins_addr) {
+                        jumps.push(target);
                     }
-
-                    println!();
                 }
+                Ok(None) => break,
                 Err(err) => {
-                    println!("(stopping due to error: {err:#x?})");
-
-                    let end_address = address + offset as u32;
-
-                    for jump in jumps {
-                        // Only add the jump if it isn't "part" of this function (i.e. between address and err.offset())
-                        if !(address..end_address).contains(&jump) {
-                            queue.push(jump);
-                        }
-                    }
+                    eprintln!("(stopping due to decoder error: {err:#x?})");
                     break;
                 }
+            }
+        }
+
+        for jump in jumps {
+            if !(start_addr..=last_addr).contains(&jump) {
+                queue.push(AddrRange(jump, AddrRangeEnd::Unbounded));
             }
         }
     }
