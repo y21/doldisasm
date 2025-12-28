@@ -1,8 +1,8 @@
 #[derive(Debug)]
 pub struct SectionInfo {
-    file_offset: u32,
-    load_offset: u32,
-    size: u32,
+    pub file_offset: u32,
+    pub load_offset: u32,
+    pub size: u32,
 }
 
 impl SectionInfo {
@@ -13,6 +13,10 @@ impl SectionInfo {
     pub fn file_offset_of_addr(&self, addr: u32) -> u32 {
         assert!(self.contains_addr(addr));
         self.file_offset + (addr - self.load_offset)
+    }
+
+    pub fn empty(&self) -> bool {
+        self.size == 0
     }
 }
 

@@ -6,12 +6,37 @@ use dol::Dol;
 use crate::args::Args;
 
 mod args;
+mod disasm;
 mod trace;
 
 fn print_headers(dol: &Dol) -> anyhow::Result<()> {
-    println!("BSS address: {:x}", dol.bss_address());
-    println!("BSS size: {:x}", dol.bss_size());
-    println!("Entrypoint: {:x}", dol.entrypoint());
+    println!("BSS address: {:#x}", dol.bss_address());
+    println!("BSS size: {:#x}", dol.bss_size());
+    println!("Entrypoint: {:#x}\n", dol.entrypoint());
+
+    Ok(())
+}
+
+fn print_sections(dol: &Dol) -> anyhow::Result<()> {
+    let mut zero_filtered = 0;
+
+    for (i, section) in dol.sections().enumerate() {
+        if section.empty() {
+            zero_filtered += 1;
+        } else {
+            println!(
+                "Section #{}: file offset {:#x}, load address {:#x}, size {:#x}",
+                i, section.file_offset, section.load_offset, section.size
+            );
+        }
+    }
+
+    if zero_filtered > 0 {
+        println!(
+            "(Note: {} sections with size 0 were omitted)",
+            zero_filtered
+        );
+    }
 
     Ok(())
 }
@@ -23,6 +48,8 @@ fn main() -> anyhow::Result<()> {
         entrypoint,
         trace,
         headers,
+        sections,
+        disasm,
     } = Args::parse()?;
 
     let dol = Dol::new(fs::read(input).context("failed to read input file")?)
@@ -49,8 +76,18 @@ fn main() -> anyhow::Result<()> {
         did_anything = true;
     }
 
+    if sections {
+        print_sections(&dol)?;
+        did_anything = true;
+    }
+
     if trace {
         trace::trace(&dol, addr()?)?;
+        did_anything = true;
+    }
+
+    if let Some(lang) = disasm {
+        disasm::disasm(&dol, addr()?, lang)?;
         did_anything = true;
     }
 

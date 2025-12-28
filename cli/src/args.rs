@@ -1,5 +1,5 @@
 use pico_args::Arguments;
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 macro_rules! define_args {
     (
@@ -39,5 +39,25 @@ define_args! {
     addr("-x"): Option<u32> = |s| u32::from_str_radix(s.trim_start_matches("0x"), 16),
     entrypoint("--entrypoint") exists: bool,
     trace("--trace") exists: bool,
-    headers("--headers") exists: bool
+    headers("--headers") exists: bool,
+    sections("--sections") exists: bool,
+    disasm("--disasm"): Option<DisassemblyLanguage> = DisassemblyLanguage::from_str
+}
+
+#[derive(Debug)]
+pub enum DisassemblyLanguage {
+    Asm,
+    C,
+}
+
+impl FromStr for DisassemblyLanguage {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "asm" => Ok(DisassemblyLanguage::Asm),
+            "c" => Ok(DisassemblyLanguage::C),
+            _ => Err(anyhow::anyhow!("invalid disassembly language: {}", s)),
+        }
+    }
 }
