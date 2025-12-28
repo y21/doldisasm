@@ -13,9 +13,8 @@ name = "cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "paste",
  "pico-args",
- "powerpc",
+ "ppc32",
 ]
 
 [[package]]
@@ -35,3 +34,11 @@ name = "powerpc"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9cac36a8d92f3c9d38ebfa606e3bbbbec229a8d757f03de0999898522856e33"
+
+[[package]]
+name = "ppc32"
+version = "0.1.0"
+dependencies = [
+ "paste",
+ "powerpc",
+]

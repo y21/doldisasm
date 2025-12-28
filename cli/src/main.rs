@@ -3,9 +3,10 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, bail};
 use pico_args::Arguments;
 
-use crate::decoder::{AddressingMode, Decoder, Instruction};
-
-mod decoder;
+use ppc32::{
+    decoder::Decoder,
+    instruction::{AddressingMode, Instruction},
+};
 
 #[derive(Debug)]
 struct SectionInfo {
@@ -109,7 +110,10 @@ fn main() -> anyhow::Result<()> {
 
     print_headers(&dol)?;
 
-    let mut queue = vec![dol.entrypoint()];
+    let mut queue = vec![
+        // dol.entrypoint(), // 0x80004e30,
+        0x800079b0,
+    ];
 
     while let Some(address) = queue.pop() {
         println!("\n--- Decoding {:#x}---", address);
@@ -127,9 +131,10 @@ fn main() -> anyhow::Result<()> {
 
         loop {
             let offset = decoder.offset();
+            let instruction_address = address + offset as u32;
             match decoder.decode_instruction() {
                 Ok(instruction) => {
-                    print!("{instruction:?}");
+                    print!("{instruction_address:#x} {instruction:?}");
 
                     if let Instruction::Branch {
                         target,

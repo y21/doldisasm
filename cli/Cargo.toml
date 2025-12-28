@@ -5,6 +5,5 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-paste = "1.0.15"
 pico-args = "0.5.0"
-powerpc = "0.4.1"
+ppc32 = { path = "../ppc32" }

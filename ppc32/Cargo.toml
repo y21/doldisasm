@@ -1,0 +1,8 @@
+[package]
+name = "ppc32"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+paste = "1.0.15"
+powerpc = "0.4.1"
