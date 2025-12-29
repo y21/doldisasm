@@ -47,7 +47,7 @@ type InstId = u32;
 type Instructions = Vec<(u32, Instruction)>;
 type InstructionsDeref = <Instructions as Deref>::Target;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RegisterState {
     definitely_initialized: bool,
 }
@@ -60,7 +60,7 @@ impl RegisterState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct BlockState {
     register_states: [RegisterState; 32],
 }
@@ -127,6 +127,8 @@ fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
             .unwrap_or_else(BlockState::empty);
 
         for (inst_id, &(_, inst)) in insts.iter().enumerate().skip(inst_id as usize) {
+            let inst_id = inst_id as u32;
+
             println!(
                 "Process instruction {inst:x?} with state {:?}",
                 /*pred_state*/ ()
@@ -167,9 +169,12 @@ fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
                 pred_state.register_states[reg as usize].definitely_initialized = true;
             }
 
-            if let Some(succs) = successors.get(&(inst_id as u32)) {
-                queue.extend(succs);
-                states.insert(inst_id as u32, pred_state);
+            if let Some(succs) = successors.get(&(inst_id)) {
+                let state_changed = states.get(&inst_id).is_none_or(|old| old != &pred_state);
+                if state_changed {
+                    queue.extend(succs);
+                    states.insert(inst_id as u32, pred_state);
+                }
                 break;
             }
         }
