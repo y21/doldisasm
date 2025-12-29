@@ -1,6 +1,6 @@
 use crate::{
     args::{AddrRange, AddrRangeEnd},
-    decoder::Decoder,
+    decoder::{Address, Decoder},
 };
 use anyhow::Context;
 use dol::Dol;
@@ -16,16 +16,16 @@ pub fn trace(dol: &Dol, start_addr: AddrRange) -> anyhow::Result<()> {
         let mut decoder = Decoder::new(buffer, address);
 
         let mut jumps = Vec::new();
-        let mut last_addr = start_addr;
+        let mut last_addr = Address(start_addr);
 
         loop {
             match decoder.next_instruction_with_offset() {
                 Ok(Some((ins_addr, ins))) => {
                     last_addr = ins_addr;
 
-                    println!("{ins_addr:#x} {ins:?}");
+                    println!("{ins_addr} {ins:?}");
 
-                    if let Some(target) = ins.branch_target(ins_addr) {
+                    if let Some(target) = ins.branch_target(ins_addr.0) {
                         jumps.push(target);
                     }
                 }
@@ -38,7 +38,7 @@ pub fn trace(dol: &Dol, start_addr: AddrRange) -> anyhow::Result<()> {
         }
 
         for jump in jumps {
-            if !(start_addr..=last_addr).contains(&jump) {
+            if !(start_addr..=last_addr.0).contains(&jump) {
                 queue.push(AddrRange(jump, AddrRangeEnd::Unbounded));
             }
         }

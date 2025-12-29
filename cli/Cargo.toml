@@ -8,3 +8,7 @@ anyhow = "1.0.100"
 pico-args = "0.5.0"
 ppc32 = { path = "../ppc32" }
 dol = { path = "../dol" }
+dataflow = { path = "../dataflow" }
+typed-index-collections = "3.4.0"
+bumpalo = "3.19.1"
+arrayvec = "0.7.6"

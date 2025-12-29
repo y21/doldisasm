@@ -3,8 +3,14 @@ use crate::word::Word;
 use paste::paste;
 
 /// A general purpose register, numbered through 0 to 31.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Gpr(pub u8);
+
+impl Gpr {
+    pub fn is_parameter(&self) -> bool {
+        matches!(self.0, 3..=10)
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 /// A special purpose register.
@@ -448,7 +454,7 @@ impl Instruction {
     }
 
     #[rustfmt::skip]
-    pub fn for_each_register(&self, mut visitor: impl RegisterVisitor) {
+    pub fn visit_registers(&self, mut visitor: impl RegisterVisitor) {
         match *self {
             Instruction::Branch { target: _, mode: _, link: _ } => {},
             Instruction::Rlwnm { source, dest, rot_bits, mask_start: _, mask_end: _, rc: _ } => {

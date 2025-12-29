@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{fmt::Display, ops::Range};
 
 use ppc32::{
     Instruction,
@@ -7,6 +7,14 @@ use ppc32::{
 };
 
 use crate::args::{AddrRange, AddrRangeEnd};
+
+#[derive(Debug, Copy, Clone)]
+pub struct Address(pub u32);
+impl Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:08x}", self.0)
+    }
+}
 
 /// A wrapper around the ppc32 decoder that knows when to stop based on the provided address range or guesses based on heuristics.
 pub struct Decoder<'a> {
@@ -32,7 +40,7 @@ impl<'a> Decoder<'a> {
 
     pub fn next_instruction_with_offset(
         &mut self,
-    ) -> Result<Option<(u32, Instruction)>, DecodeError> {
+    ) -> Result<Option<(Address, Instruction)>, DecodeError> {
         let offset = self.decoder.offset_u32();
         let instr_addr = self.range.0 + offset;
 
@@ -82,6 +90,6 @@ impl<'a> Decoder<'a> {
             self.reached_end = true;
         }
 
-        Ok(Some((instr_addr, instruction)))
+        Ok(Some((Address(instr_addr), instruction)))
     }
 }
