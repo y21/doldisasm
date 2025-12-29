@@ -26,6 +26,10 @@ impl<'a> Decoder<'a> {
         }
     }
 
+    pub fn address(&self) -> AddrRange {
+        self.range
+    }
+
     pub fn next_instruction_with_offset(
         &mut self,
     ) -> Result<Option<(u32, Instruction)>, DecodeError> {

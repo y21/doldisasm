@@ -2,8 +2,40 @@ use crate::decoder::{DecodeError, Decoder};
 use crate::word::Word;
 use paste::paste;
 
+/// A general purpose register, numbered through 0 to 31.
 #[derive(Debug, Copy, Clone)]
-pub struct Register(pub u8);
+pub struct Gpr(pub u8);
+
+#[derive(Debug, Copy, Clone)]
+/// A special purpose register.
+pub enum Spr {
+    Xer,
+    Lr,
+    Ctr,
+    Msr,
+    Pc,
+    /// Only usable in supervisor mode.
+    Other(u16),
+}
+
+impl Spr {
+    pub fn from_word(word: Word) -> Self {
+        match word.u16::<11, 15>() | (word.u16::<16, 20>() << 5) {
+            1 => Spr::Xer,
+            8 => Spr::Lr,
+            9 => Spr::Ctr,
+            other => Spr::Other(other),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+/// A control register field, numbered CRF0 through CRF7.
+pub struct Crf(pub u8);
+
+#[derive(Debug, Copy, Clone)]
+/// A control register bit, numbered CRB0 through CRB3 (four bits).
+pub struct Crb(pub u8);
 
 #[derive(Debug, Copy, Clone)]
 pub struct Immediate<T>(pub T);
@@ -88,9 +120,9 @@ define_instructions! {
     Rlwnm {
         op: 0b010111,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
-            rot_bits: Register = |word| Register(word.u8::<16, 20>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            rot_bits: Gpr = |word| Gpr(word.u8::<16, 20>()),
             mask_start: Immediate<u8> = |word| Immediate(word.u8::<21, 25>()),
             mask_end: Immediate<u8> = |word| Immediate(word.u8::<26, 30>()),
             rc: bool = |word| word.bit::<31>() != 0
@@ -99,8 +131,8 @@ define_instructions! {
     Rlwinm {
         op: 0b10101,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
             rot_bits: Immediate<u8> = |word| Immediate(word.u8::<16, 20>()),
             mask_start: Immediate<u8> = |word| Immediate(word.u8::<21, 25>()),
             mask_end: Immediate<u8> = |word| Immediate(word.u8::<26, 30>()),
@@ -110,42 +142,42 @@ define_instructions! {
     Addis {
         op: 0b001111,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            add: Option<Register> = |word| Some(word.u8::<11, 15>()).filter(|&r| r != 0).map(Register),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            add: Option<Gpr> = |word| Some(word.u8::<11, 15>()).filter(|&r| r != 0).map(Gpr),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
     Addi {
         op: 0b001110,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
     Ori {
         op: 0b011000,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<u16> = |word| Immediate(word.u16::<16, 31>())
         }
     },
     Cmpli {
         op: 0b001010,
         {
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<u16> = |word| Immediate(word.u16::<16, 31>()),
-            crf: Register = |word| Register(word.u8::<6, 8>()),
+            crf: Crf = |word| Crf(word.u8::<6, 8>()),
             l: bool = |word| word.bit::<10>() != 0
         }
     },
     Cmpi {
         op: 0b001011,
         {
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<u16> = |word| Immediate(word.u16::<16, 31>()),
-            crf: Register = |word| Register(word.u8::<6, 8>()),
+            crf: Crf = |word| Crf(word.u8::<6, 8>()),
             l: bool = |word| word.bit::<10>() != 0
         }
     },
@@ -153,9 +185,9 @@ define_instructions! {
         op: EXTENDED_OPCODE,
         xform_op: 0b100000,
         {
-            source_a: Register = |word| Register(word.u8::<11, 15>()),
-            source_b: Register = |word| Register(word.u8::<16, 20>()),
-            crf: Register = |word| Register(word.u8::<6, 8>()),
+            source_a: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            source_b: Gpr = |word| Gpr(word.u8::<16, 20>()),
+            crf: Crf = |word| Crf(word.u8::<6, 8>()),
             l: bool = |word| word.bit::<10>() != 0
         }
     },
@@ -163,9 +195,9 @@ define_instructions! {
         op: EXTENDED_OPCODE,
         xform_op: 0,
         {
-            source_a: Register = |word| Register(word.u8::<11, 15>()),
-            source_b: Register = |word| Register(word.u8::<16, 20>()),
-            crf: Register = |word| Register(word.u8::<6, 8>()),
+            source_a: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            source_b: Gpr = |word| Gpr(word.u8::<16, 20>()),
+            crf: Crf = |word| Crf(word.u8::<6, 8>()),
             l: bool = |word| word.bit::<10>() != 0
         }
     },
@@ -191,8 +223,8 @@ define_instructions! {
     Stwu {
         op: 0b100101,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
@@ -200,18 +232,18 @@ define_instructions! {
         op: EXTENDED_OPCODE,
         xform_op: 0b10110111,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
-            index: Register = |word| Register(word.u8::<16, 20>())
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            index: Gpr = |word| Gpr(word.u8::<16, 20>())
         }
     },
     Subf {
         op: EXTENDED_OPCODE,
         xform_op: 0b101000,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source_b: Register = |word| Register(word.u8::<11, 15>()),
-            source_a: Register = |word| Register(word.u8::<16, 20>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source_b: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            source_a: Gpr = |word| Gpr(word.u8::<16, 20>()),
             oe: bool = |word| word.bit::<21>() != 0,
             rc: bool = |word| word.bit::<31>() != 0
         }
@@ -220,39 +252,39 @@ define_instructions! {
         op: EXTENDED_OPCODE,
         xform_op: 0b101010011,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            spr: SpecialPurposeRegister = SpecialPurposeRegister::from_word
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            spr: Spr = Spr::from_word
         }
     },
     Mtspr {
         op: EXTENDED_OPCODE,
         xform_op: 0b111010011,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            spr: SpecialPurposeRegister = SpecialPurposeRegister::from_word
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            spr: Spr = Spr::from_word
         }
     },
     Mfmsr {
         op: EXTENDED_OPCODE,
         xform_op: 0b1010011,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>())
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>())
         }
     },
     Mtmsr {
         op: EXTENDED_OPCODE,
         xform_op: 0b10010010,
         {
-            source: Register = |word| Register(word.u8::<6, 10>())
+            source: Gpr = |word| Gpr(word.u8::<6, 10>())
         }
     },
     Or {
         op: EXTENDED_OPCODE,
         xform_op: 0b110111100,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
-            or_with: Register = |word| Register(word.u8::<16, 20>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            or_with: Gpr = |word| Gpr(word.u8::<16, 20>()),
             rc: bool = |word| word.bit::<31>() != 0
         }
     },
@@ -260,40 +292,40 @@ define_instructions! {
         op: EXTENDED_OPCODE,
         xform_op: 0b11100,
         {
-            source1: Register = |word| Register(word.u8::<6, 10>()),
-            source2: Register = |word| Register(word.u8::<16, 20>()),
-            dest: Register = |word| Register(word.u8::<11, 15>())
+            source1: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source2: Gpr = |word| Gpr(word.u8::<16, 20>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>())
         }
     },
     Stw {
         op: 0b100100,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
     Stmw {
         op: 0b101111,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
     Lwz {
         op: 0b100000,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
     Lwzu {
         op: 0b100001,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
@@ -314,8 +346,8 @@ define_instructions! {
     Oris {
         op: 0b11001,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<u16> = |word| Immediate(word.u16::<16, 31>())
         }
     },
@@ -323,15 +355,15 @@ define_instructions! {
         op: 0b111111,
         xform_op: 0b100110,
         {
-            crf: Register = |word| Register(word.u8::<6, 10>()),
+            crf: Crf = |word| Crf(word.u8::<6, 10>()),
             rc: bool = |word| word.bit::<31>() != 0
         }
     },
     Lmw {
         op: 0b101110,
         {
-            source: Register = |word| Register(word.u8::<6, 10>()),
-            dest: Register = |word| Register(word.u8::<11, 15>()),
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
@@ -339,23 +371,23 @@ define_instructions! {
         op: EXTENDED_OPCODE,
         xform_op: 0b101110011,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
             tbr: TimeBaseRegister = TimeBaseRegister::from_word
         }
     },
     Lhz {
         op: 0b101000,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
     Lbz {
         op: 0b100010,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<i16> = |word| Immediate(word.i16::<16, 31>())
         }
     },
@@ -363,8 +395,8 @@ define_instructions! {
         op: EXTENDED_OPCODE,
         xform_op: 0b1101000,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source: Register = |word| Register(word.u8::<11, 15>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             rc: bool = |word| word.bit::<31>() != 0,
             oe: bool = |word| word.bit::<21>() != 0
         }
@@ -373,22 +405,33 @@ define_instructions! {
         op: 0b010011,
         xform_op: 0b11000001,
         {
-            crb_dest: Register = |word| Register(word.u8::<6, 10>()),
-            crb_a: Register = |word| Register(word.u8::<11, 15>()),
-            crb_b: Register = |word| Register(word.u8::<16, 20>())
+            crb_dest: Crb = |word| Crb(word.u8::<6, 10>()),
+            crb_a: Crb = |word| Crb(word.u8::<11, 15>()),
+            crb_b: Crb = |word| Crb(word.u8::<16, 20>())
         }
     },
     Add {
         op: EXTENDED_OPCODE,
         xform_op: 0b100001010,
         {
-            dest: Register = |word| Register(word.u8::<6, 10>()),
-            source_a: Register = |word| Register(word.u8::<11, 15>()),
-            source_b: Register = |word| Register(word.u8::<16, 20>()),
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source_a: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            source_b: Gpr = |word| Gpr(word.u8::<16, 20>()),
             oe: bool = |word| word.bit::<21>() != 0,
             rc: bool = |word| word.bit::<31>() != 0
         }
     }
+}
+
+pub trait RegisterVisitor {
+    fn read_gpr(&mut self, _gpr: Gpr) {}
+    fn write_gpr(&mut self, _gpr: Gpr) {}
+    fn read_spr(&mut self, _spr: Spr) {}
+    fn write_spr(&mut self, _spr: Spr) {}
+    fn read_crf(&mut self, _crf: Crf) {}
+    fn write_crf(&mut self, _crf: Crf) {}
+    fn read_crb(&mut self, _crb: Crb) {}
+    fn write_crb(&mut self, _crb: Crb) {}
 }
 
 impl Instruction {
@@ -403,23 +446,149 @@ impl Instruction {
             _ => None,
         }
     }
-}
 
-#[derive(Debug, Copy, Clone)]
-pub enum SpecialPurposeRegister {
-    Xer,
-    Lr,
-    Ctr,
-    Other(u16),
-}
-
-impl SpecialPurposeRegister {
-    pub fn from_word(word: Word) -> Self {
-        match word.u16::<11, 15>() | (word.u16::<16, 20>() << 5) {
-            1 => SpecialPurposeRegister::Xer,
-            8 => SpecialPurposeRegister::Lr,
-            9 => SpecialPurposeRegister::Ctr,
-            other => SpecialPurposeRegister::Other(other),
+    #[rustfmt::skip]
+    pub fn for_each_register(&self, mut visitor: impl RegisterVisitor) {
+        match *self {
+            Instruction::Branch { target: _, mode: _, link: _ } => {},
+            Instruction::Rlwnm { source, dest, rot_bits, mask_start: _, mask_end: _, rc: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_gpr(dest);
+                visitor.read_gpr(rot_bits);
+            },
+            Instruction::Rlwinm { source, dest, rot_bits: _, mask_start: _, mask_end: _, rc: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Addis { dest, add, imm: _ } => {
+                if let Some(gpr) = add {
+                    visitor.read_gpr(gpr);
+                }
+                visitor.write_gpr(dest);
+            },
+            Instruction::Addi { dest, source, imm: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Ori { source, dest, imm: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Cmpli { source, imm: _, crf, l: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_crf(crf);
+            },
+            Instruction::Cmpi { source, imm: _, crf, l: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_crf(crf);
+            },
+            Instruction::Cmpl { source_a, source_b, crf, l: _ } => {
+                visitor.read_gpr(source_a);
+                visitor.read_gpr(source_b);
+                visitor.write_crf(crf);
+            },
+            Instruction::Cmp { source_a, source_b, crf, l: _ } => {
+                visitor.read_gpr(source_a);
+                visitor.read_gpr(source_b);
+                visitor.write_crf(crf);
+            },
+            Instruction::Bc { bo: _, bi: _, target: _, mode: _, link: _ } => {},
+            Instruction::Bclr { bo: _, bi: _, link: _ } => {},
+            Instruction::Stwu { source, dest, imm: _ } => {
+                visitor.read_gpr(source);
+                visitor.read_gpr(dest);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Stwux { source, dest, index } => {
+                visitor.read_gpr(source);
+                visitor.read_gpr(dest);
+                visitor.read_gpr(index);
+            },
+            Instruction::Subf { dest, source_b, source_a, oe: _, rc: _ } => {
+                visitor.read_gpr(source_a);
+                visitor.read_gpr(source_b);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Mfspr { dest, spr } => {
+                visitor.write_gpr(dest);
+                visitor.read_spr(spr);
+            },
+            Instruction::Mtspr { source, spr } => {
+                visitor.read_gpr(source);
+                visitor.write_spr(spr);
+            },
+            Instruction::Mfmsr { dest } => {
+                visitor.read_spr(Spr::Msr);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Mtmsr { source } => {
+                visitor.read_gpr(source);
+                visitor.write_spr(Spr::Msr);
+            },
+            Instruction::Or { source, dest, or_with, rc: _ } => {
+                visitor.read_gpr(source);
+                visitor.read_gpr(or_with);
+                visitor.write_gpr(dest);
+            },
+            Instruction::And { source1, source2, dest } => {
+                visitor.read_gpr(source1);
+                visitor.read_gpr(source2);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Stw { source, dest, imm: _ } => {
+                visitor.read_gpr(source);
+                visitor.read_gpr(dest);
+            },
+            Instruction::Stmw { source, dest, imm: _ } => {
+                visitor.read_gpr(source);
+                visitor.read_gpr(dest);
+            },
+            Instruction::Lwz { dest, source, imm: _ } => {
+                visitor.write_gpr(dest);
+                visitor.read_gpr(source);
+            },
+            Instruction::Lwzu { dest, source, imm: _ } => {
+                visitor.write_gpr(dest);
+                visitor.read_gpr(source);
+            },
+            Instruction::Isync {} => {},
+            Instruction::Hwsync {} => {},
+            Instruction::Oris { source, dest, imm: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Mtfsb1 { crf, rc: _ } => {
+                visitor.write_crf(crf);
+            },
+            Instruction::Lmw { source, dest, imm: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Mftb { dest, tbr: _ } => {
+                visitor.write_gpr(dest);
+            },
+            Instruction::Lhz { dest, source, imm: _ } => {
+                visitor.write_gpr(dest);
+                visitor.read_gpr(source);
+            },
+            Instruction::Lbz { dest, source, imm: _ } => {
+                visitor.write_gpr(dest);
+                visitor.read_gpr(source);
+            },
+            Instruction::Neg { dest, source, rc: _, oe: _ } => {
+                visitor.read_gpr(source);
+                visitor.write_gpr(dest);
+            },
+            Instruction::Crxor { crb_dest, crb_a, crb_b } => {
+                visitor.write_crb(crb_dest);
+                visitor.read_crb(crb_a);
+                visitor.read_crb(crb_b);
+            },
+            Instruction::Add { dest, source_a, source_b, oe: _, rc: _ } => {
+                visitor.read_gpr(source_a);
+                visitor.read_gpr(source_b);
+                visitor.write_gpr(dest);
+            },
         }
     }
 }
