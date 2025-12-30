@@ -12,3 +12,4 @@ dataflow = { path = "../dataflow" }
 typed-index-collections = "3.4.0"
 bumpalo = "3.19.1"
 arrayvec = "0.7.6"
+either = "1.15.0"

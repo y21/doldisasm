@@ -1,66 +1,123 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-pub type PredecessorsSuccessors<D> = HashMap<<D as Dataflow>::Idx, Vec<<D as Dataflow>::Idx>>;
+#[derive(PartialEq, Eq)]
+pub enum SuccessorTarget<D: Dataflow> {
+    /// Jump to a block.
+    Id(D::Idx),
+    /// Return from the function.
+    Return,
+}
 
-pub trait Dataflow {
+impl<D> Copy for SuccessorTarget<D>
+where
+    D: Dataflow,
+    D::Idx: Copy,
+{
+}
+impl<D> Clone for SuccessorTarget<D>
+where
+    D: Dataflow,
+    D::Idx: Clone,
+{
+    fn clone(&self) -> Self {
+        match self {
+            Self::Id(arg0) => Self::Id(arg0.clone()),
+            Self::Return => Self::Return,
+        }
+    }
+}
+
+impl<D> Debug for SuccessorTarget<D>
+where
+    D: Dataflow,
+    D::Idx: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SuccessorTarget::Id(idx) => write!(f, "Id({:?})", idx),
+            SuccessorTarget::Return => write!(f, "Return"),
+        }
+    }
+}
+
+impl<D: Dataflow> SuccessorTarget<D> {
+    pub fn idx(&self) -> Option<D::Idx> {
+        match self {
+            SuccessorTarget::Id(idx) => Some(*idx),
+            SuccessorTarget::Return => None,
+        }
+    }
+}
+
+pub type Predecessors<D> = HashMap<<D as Dataflow>::Idx, Vec<<D as Dataflow>::Idx>>;
+pub type Successors<D> = HashMap<<D as Dataflow>::Idx, Vec<SuccessorTarget<D>>>;
+
+pub trait Dataflow: Sized {
     type Idx: Hash + Eq + Copy;
     type BlockState: Clone + Default + PartialEq;
     type BlockItem;
 
-    fn compute_preds_and_succs(
-        &self,
-        preds: &mut PredecessorsSuccessors<Self>,
-        succs: &mut PredecessorsSuccessors<Self>,
-    );
+    fn compute_preds_and_succs(&self, preds: &mut Predecessors<Self>, succs: &mut Successors<Self>);
     fn initial_idx() -> Self::Idx;
     fn join_states(a: &Self::BlockState, b: &Self::BlockState) -> Self::BlockState;
     fn iter_block(&self, block: Self::Idx) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
     fn iter(&self) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
-    fn apply_effect(&self, state: &mut Self::BlockState, data: &Self::BlockItem);
+    fn apply_effect(&self, state: &mut Self::BlockState, idx: Self::Idx, data: &Self::BlockItem);
 }
 
-pub fn run<D: Dataflow>(dataflow: &D) -> Results<D> {
+pub fn run<D: Dataflow>(dataflow: &D) -> Results<D>
+where
+    D::Idx: std::fmt::Debug,
+    D::BlockItem: std::fmt::Debug,
+    D::BlockState: std::fmt::Debug,
+{
     let mut queue = vec![D::initial_idx()];
 
-    let mut preds: HashMap<D::Idx, Vec<D::Idx>> = HashMap::default();
-    let mut succs: HashMap<D::Idx, Vec<D::Idx>> = HashMap::default();
-    let mut states: HashMap<D::Idx, D::BlockState> = HashMap::default();
+    let mut preds = HashMap::default();
+    let mut succs = HashMap::default();
+    let mut entry_states: HashMap<D::Idx, D::BlockState> = HashMap::default();
 
     dataflow.compute_preds_and_succs(&mut preds, &mut succs);
 
     while let Some(idx) = queue.pop() {
-        let mut state: D::BlockState = if let Some(preds) = preds.get(&idx) {
-            preds
-                .iter()
-                .map(|block| &states[block])
-                .fold(None, |acc, state| {
-                    if let Some(acc) = acc {
-                        Some(D::join_states(&acc, state))
-                    } else {
-                        Some(state.clone())
-                    }
-                })
-                .unwrap()
-        } else {
-            assert!(idx == D::initial_idx());
+        println!("Process next! {idx:?}");
+        let mut state = entry_states.get(&idx).cloned().unwrap_or_else(|| {
+            assert_eq!(idx, D::initial_idx());
             D::BlockState::default()
-        };
+        });
 
         for (idx, item) in dataflow.iter_block(idx) {
-            dataflow.apply_effect(&mut state, &item);
+            dataflow.apply_effect(&mut state, idx, &item);
 
             if let Some(succs) = succs.get(&idx) {
-                let state_changed = states.get(&idx).is_none_or(|old| old != &state);
-                if state_changed {
-                    queue.extend(succs.iter().copied());
-                    states.insert(idx, state);
+                // Note: `succs` may be empty for `blr` (exit blocks).
+
+                for &succ in succs {
+                    if let SuccessorTarget::Id(succ) = succ {
+                        if let Some(succ_state) = entry_states.get(&succ) {
+                            let succ_state_joined = D::join_states(&state, succ_state);
+                            let state_changed = &succ_state_joined != succ_state;
+
+                            if state_changed {
+                                queue.push(succ);
+                                entry_states.insert(succ, succ_state_joined);
+                            }
+                        } else {
+                            // First time visiting this successor.
+                            queue.push(succ);
+                            entry_states.insert(succ, state.clone());
+                        }
+                    }
                 }
+
                 break;
             }
         }
     }
 
-    Results { states }
+    Results {
+        states: entry_states,
+    }
 }
 
 pub struct Results<D: Dataflow> {
@@ -85,7 +142,7 @@ where
                 state = new_state.clone();
             }
 
-            analysis.apply_effect(&mut state, &item);
+            analysis.apply_effect(&mut state, idx, &item);
 
             after_effect(idx, item, &state);
         }

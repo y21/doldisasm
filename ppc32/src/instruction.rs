@@ -1,18 +1,29 @@
+use std::fmt::Debug;
+
 use crate::decoder::{DecodeError, Decoder};
 use crate::word::Word;
 use paste::paste;
 
 /// A general purpose register, numbered through 0 to 31.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Gpr(pub u8);
 
+impl Debug for Gpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "r{}", self.0)
+    }
+}
+
 impl Gpr {
+    pub const ZERO: Self = Self(0);
+    pub const RETURN: Self = Self(3);
+
     pub fn is_parameter(&self) -> bool {
         matches!(self.0, 3..=10)
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 /// A special purpose register.
 pub enum Spr {
     Xer,
@@ -22,6 +33,19 @@ pub enum Spr {
     Pc,
     /// Only usable in supervisor mode.
     Other(u16),
+}
+
+impl Debug for Spr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Spr::Xer => write!(f, "XER"),
+            Spr::Lr => write!(f, "LR"),
+            Spr::Ctr => write!(f, "CTR"),
+            Spr::Msr => write!(f, "MSR"),
+            Spr::Pc => write!(f, "PC"),
+            Spr::Other(num) => write!(f, "SPR({})", num),
+        }
+    }
 }
 
 impl Spr {
@@ -596,6 +620,21 @@ impl Instruction {
                 visitor.write_gpr(dest);
             },
         }
+    }
+
+    pub fn for_each_read_gpr(&self, mut f: impl FnMut(Gpr)) {
+        struct Visitor<'a, F: FnMut(Gpr)> {
+            f: &'a mut F,
+        }
+
+        impl<'a, F: FnMut(Gpr)> RegisterVisitor for Visitor<'a, F> {
+            fn read_gpr(&mut self, gpr: Gpr) {
+                (self.f)(gpr);
+            }
+        }
+
+        let visitor = Visitor { f: &mut f };
+        self.visit_registers(visitor);
     }
 }
 

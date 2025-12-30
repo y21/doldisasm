@@ -9,6 +9,7 @@ mod args;
 mod decoder;
 mod disasm;
 mod trace;
+mod value;
 
 fn main() -> anyhow::Result<()> {
     let Args {
