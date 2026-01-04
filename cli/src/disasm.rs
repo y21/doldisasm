@@ -323,7 +323,7 @@ impl<'bump> Dataflow for Analysis<'_, 'bump> {
 
     fn apply_effect(&self, state: &mut Self::BlockState, idx: Self::Idx, data: &Self::BlockItem) {
         let inst_addr = self.fn_address + 4 * idx.0;
-        // println!("[{:x}] {data:?}", inst_addr);
+        println!("[{:x}] {data:?}", inst_addr);
 
         data.for_each_read_gpr(|gpr| state.set_gpr_read(gpr, true));
 

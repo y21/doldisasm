@@ -5,7 +5,7 @@ use crate::word::Word;
 use paste::paste;
 
 /// A general purpose register, numbered through 0 to 31.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Gpr(pub u8);
 
 impl Debug for Gpr {
@@ -23,7 +23,7 @@ impl Gpr {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 /// A special purpose register.
 pub enum Spr {
     Xer,

@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use arrayvec::ArrayVec;
 use bumpalo::Bump;
 use either::Either;
+use ppc32::instruction::{Gpr, Spr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Parameter(pub u8);
@@ -94,6 +95,10 @@ pub enum ValueInner<'bump> {
     OneIfNegative(&'bump Value<'bump>),
     OneIfPositive(&'bump Value<'bump>),
     OneIfZero(&'bump Value<'bump>),
+    /// A reference to a gpr
+    Gpr(Gpr),
+    /// A reference to a spr
+    Spr(Spr),
     /// The result of a bl
     CallResult(u32),
     ReturnAddress,
@@ -125,6 +130,8 @@ impl Debug for ValueInner<'_> {
             ValueInner::CallResult(addr) => write!(f, "<retval of call to 0x{:08x}>", addr),
             ValueInner::ReturnAddress => write!(f, "<return_address>"),
             ValueInner::Any => write!(f, "<any>"),
+            ValueInner::Gpr(gpr) => gpr.fmt(f),
+            ValueInner::Spr(spr) => spr.fmt(f),
         }
     }
 }
@@ -288,6 +295,14 @@ impl<'bump> Value<'bump> {
 
     pub fn parameter(param: Parameter) -> Self {
         Self(ValueInner::Param(param))
+    }
+
+    pub fn gpr(gpr: Gpr) -> Self {
+        Self(ValueInner::Gpr(gpr))
+    }
+
+    pub fn spr(spr: Spr) -> Self {
+        Self(ValueInner::Spr(spr))
     }
 
     pub fn inner(self) -> ValueInner<'bump> {
