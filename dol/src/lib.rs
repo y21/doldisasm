@@ -46,6 +46,8 @@ impl Dol {
 
     /// Create a new DOL from the given bytes, validating it in the process.
     pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
+        // TODO: can we have a check if this is a .elf instead of .dol, for a better error?
+
         if bytes.len() < 0xFF {
             return Err(".dol file smaller than 255 bytes (does not contain all headers)");
         }
