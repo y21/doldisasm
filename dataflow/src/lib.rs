@@ -68,8 +68,6 @@ pub trait Dataflow: Sized {
 pub fn run<D: Dataflow>(dataflow: &D) -> Results<D>
 where
     D::Idx: std::fmt::Debug,
-    D::BlockItem: std::fmt::Debug,
-    D::BlockState: std::fmt::Debug,
 {
     let mut queue = vec![D::initial_idx()];
 
@@ -80,7 +78,6 @@ where
     dataflow.compute_preds_and_succs(&mut preds, &mut succs);
 
     while let Some(idx) = queue.pop() {
-        println!("Process next! {idx:?}");
         let mut state = entry_states.get(&idx).cloned().unwrap_or_else(|| {
             assert_eq!(idx, D::initial_idx());
             D::BlockState::default()
@@ -129,6 +126,10 @@ where
     D::Idx: std::fmt::Debug,
     D::BlockState: std::fmt::Debug,
 {
+    pub fn get(&self, idx: D::Idx) -> Option<&D::BlockState> {
+        self.states.get(&idx)
+    }
+
     /// Iterates over the results along with the input items.
     pub fn for_each_with_input(
         &self,

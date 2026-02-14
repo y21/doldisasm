@@ -5,7 +5,7 @@ use crate::word::Word;
 use paste::paste;
 
 /// A general purpose register, numbered through 0 to 31.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Gpr(pub u8);
 
 impl Debug for Gpr {
@@ -17,13 +17,18 @@ impl Debug for Gpr {
 impl Gpr {
     pub const ZERO: Self = Self(0);
     pub const RETURN: Self = Self(3);
+    pub const STACK_POINTER: Self = Self(1);
 
     pub fn is_parameter(&self) -> bool {
         matches!(self.0, 3..=10)
     }
+
+    pub fn is_callee_saved(&self) -> bool {
+        matches!(self.0, 14..=31)
+    }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// A special purpose register.
 pub enum Spr {
     Xer,
@@ -55,6 +60,20 @@ impl Spr {
             8 => Spr::Lr,
             9 => Spr::Ctr,
             other => Spr::Other(other),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Register {
+    Gpr(Gpr),
+    Spr(Spr),
+}
+impl Debug for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Gpr(arg0) => arg0.fmt(f),
+            Self::Spr(arg0) => arg0.fmt(f),
         }
     }
 }

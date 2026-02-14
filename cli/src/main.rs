@@ -6,8 +6,10 @@ use dol::Dol;
 use crate::args::{AddrRange, AddrRangeEnd, Args};
 
 mod args;
+mod ast;
 mod decoder;
 mod disasm;
+mod flow;
 mod trace;
 mod value;
 
