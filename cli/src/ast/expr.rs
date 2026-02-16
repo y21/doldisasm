@@ -8,6 +8,7 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
     Var(VarId),
+    Unary(UnaryExpr),
     Binary(BinaryExpr),
     Immediate32(i32),
     Immediate16(i16),
@@ -29,4 +30,19 @@ pub struct BinaryExpr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
+    Lt,
+    Gt,
+    Eq,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnaryExpr {
+    pub op: UnaryOp,
+    pub operand: Box<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
 }

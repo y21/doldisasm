@@ -34,4 +34,13 @@ impl Into<usize> for VarId {
     }
 }
 
-pub struct Variable {}
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum VariableVisibility {
+    Visible,
+    Hidden,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Variable {
+    pub vis: VariableVisibility,
+}

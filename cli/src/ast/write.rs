@@ -2,9 +2,9 @@ use core::fmt;
 
 use crate::ast::{
     Ast,
-    expr::{BinaryExpr, BinaryOp, Expr, ExprKind, FnCallTarget},
+    expr::{BinaryExpr, BinaryOp, Expr, ExprKind, FnCallTarget, UnaryExpr, UnaryOp},
     item::{Function, Item, ItemKind, Parameter},
-    stmt::{Stmt, StmtKind},
+    stmt::{Stmt, StmtKind, VarId},
     ty::{self, TyKind},
 };
 
@@ -59,10 +59,14 @@ impl Writer for StringWriter {
     }
 }
 
+fn write_var_id(var_id: VarId, writer: &mut dyn Writer) {
+    writer.write_fmt(format_args!("v{}", var_id.0));
+}
+
 fn write_expr(expr: &Expr, writer: &mut dyn Writer) {
     match expr.kind {
         ExprKind::Var(var_id) => {
-            writer.write_str(&format!("v{}", var_id.0));
+            write_var_id(var_id, writer);
         }
         ExprKind::Binary(BinaryExpr {
             ref left,
@@ -72,8 +76,18 @@ fn write_expr(expr: &Expr, writer: &mut dyn Writer) {
             write_expr(left, writer);
             match op {
                 BinaryOp::Add => writer.write_str(" + "),
+                BinaryOp::Lt => writer.write_str(" < "),
+                BinaryOp::Gt => writer.write_str(" > "),
+                BinaryOp::Eq => writer.write_str(" == "),
             }
             write_expr(right, writer);
+        }
+        ExprKind::Unary(UnaryExpr { op, ref operand }) => {
+            match op {
+                UnaryOp::Neg => writer.write_str("-"),
+                UnaryOp::Not => writer.write_str("!"),
+            }
+            write_expr(operand, writer);
         }
         ExprKind::Immediate32(value) => writer.write_fmt(format_args!("{}", value)),
         ExprKind::Immediate16(value) => writer.write_fmt(format_args!("{}", value)),
@@ -146,6 +160,8 @@ fn write_stmt(stmt: &Stmt, writer: &mut dyn Writer) {
 fn write_ty(ty: &ty::Ty, writer: &mut dyn Writer) {
     match ty.kind {
         TyKind::Void => writer.write_str("void"),
+        TyKind::I32 => writer.write_str("i32"),
+        TyKind::U32 => writer.write_str("u32"),
     }
 }
 
@@ -159,11 +175,13 @@ fn write_function(
 ) {
     write_ty(return_ty, writer);
     writer.write_str(" func(");
-    for (i, Parameter { ty }) in params.iter().enumerate() {
+    for (i, &Parameter { ref ty, var_id }) in params.iter().enumerate() {
         if i > 0 {
             writer.write_str(", ");
         }
         write_ty(ty, writer);
+        writer.write_str(" ");
+        write_var_id(var_id, writer);
     }
     writer.write_str(") {");
     writer.with_scope(&mut |writer| {

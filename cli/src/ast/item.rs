@@ -1,4 +1,7 @@
-use crate::ast::{stmt::Stmt, ty::Ty};
+use crate::ast::{
+    stmt::{Stmt, VarId},
+    ty::Ty,
+};
 
 pub struct Item {
     pub kind: ItemKind,
@@ -14,5 +17,6 @@ pub struct Function {
 }
 
 pub struct Parameter {
+    pub var_id: VarId,
     pub ty: Ty,
 }

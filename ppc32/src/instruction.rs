@@ -31,7 +31,7 @@ impl Gpr {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// A special purpose register.
 pub enum Spr {
-    Xer,
+    Xer, // TODO: split this up into smaller things like OV etc?
     Lr,
     Ctr,
     Msr,
@@ -67,24 +67,68 @@ impl Spr {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Register {
     Gpr(Gpr),
+    Cr(Crf, Crb),
     Spr(Spr),
 }
 impl Debug for Register {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Gpr(arg0) => arg0.fmt(f),
+            Self::Cr(arg0, arg1) => write!(f, "CR{}.{:?}", arg0.0, arg1),
             Self::Spr(arg0) => arg0.fmt(f),
         }
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// A control register field, numbered CRF0 through CRF7.
 pub struct Crf(pub u8);
 
-#[derive(Debug, Copy, Clone)]
-/// A control register bit, numbered CRB0 through CRB3 (four bits).
-pub struct Crb(pub u8);
+macro_rules! mk_ordinal_enum {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $name:ident {
+            $(
+                $variant:ident = $value:expr
+            ),*
+        }
+    ) => {
+        $(#[$meta])*
+        $vis enum $name {
+            $(
+                $variant = $value
+            ),*
+        }
+        impl $name {
+            pub fn from_repr(v: u8) -> Option<Self> {
+                match v {
+                    $(
+                        $value => Some(Self::$variant),
+                    )*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+mk_ordinal_enum! {
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    /// A control register bit, numbered CRB0 through CRB3 (four bits).
+    pub enum Crb {
+        Negative = 0,
+        Positive = 1,
+        Zero = 2,
+        Overflow = 3
+    }
+}
+
+/// Maps a condition register bit index to the corresponding CRF and CRB.
+pub fn crb_from_index(index: u8) -> (Crf, Crb) {
+    let crf = index / 4;
+    let crb = index % 4;
+    (Crf(crf), Crb::from_repr(crb).unwrap())
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct Immediate<T>(pub T);
@@ -254,7 +298,7 @@ define_instructions! {
         op: 0b010000,
         {
             bo: BranchOptions = BranchOptions::from_word,
-            bi: i8 = |word| word.i8::<11, 15>(),
+            bi: u8 = |word| word.u8::<11, 15>(),
             target: i32 = |word| word.i32::<16, 29>() << 2,
             mode: AddressingMode = |word| AddressingMode::from_absolute_bit(word.bit::<30>()),
             link: bool = |word| word.bit::<31>() != 0
@@ -265,7 +309,7 @@ define_instructions! {
         xform_op: 0b010000,
         {
             bo: BranchOptions = BranchOptions::from_word,
-            bi: i8 = |word| word.i8::<11, 15>(),
+            bi: u8 = |word| word.u8::<11, 15>(),
             link: bool = |word| word.bit::<31>() != 0
         }
     },
@@ -454,9 +498,9 @@ define_instructions! {
         op: 0b010011,
         xform_op: 0b11000001,
         {
-            crb_dest: Crb = |word| Crb(word.u8::<6, 10>()),
-            crb_a: Crb = |word| Crb(word.u8::<11, 15>()),
-            crb_b: Crb = |word| Crb(word.u8::<16, 20>())
+            crb_dest: u8 = |word| word.u8::<6, 10>(),
+            crb_a: u8 = |word| word.u8::<11, 15>(),
+            crb_b: u8 = |word| word.u8::<16, 20>()
         }
     },
     Add {
@@ -479,8 +523,8 @@ pub trait RegisterVisitor {
     fn write_spr(&mut self, _spr: Spr) {}
     fn read_crf(&mut self, _crf: Crf) {}
     fn write_crf(&mut self, _crf: Crf) {}
-    fn read_crb(&mut self, _crb: Crb) {}
-    fn write_crb(&mut self, _crb: Crb) {}
+    fn read_crb(&mut self, _crf: Crf, _crb: Crb) {}
+    fn write_crb(&mut self, _crf: Crf, _crb: Crb) {}
 }
 
 impl Instruction {
@@ -499,15 +543,25 @@ impl Instruction {
     #[rustfmt::skip]
     pub fn visit_registers(&self, mut visitor: impl RegisterVisitor) {
         match *self {
-            Instruction::Branch { target: _, mode: _, link: _ } => {},
-            Instruction::Rlwnm { source, dest, rot_bits, mask_start: _, mask_end: _, rc: _ } => {
+            Instruction::Branch { target: _, mode: _, link } => {
+                if link {
+                    visitor.write_gpr(Gpr::RETURN);
+                }
+            },
+            Instruction::Rlwnm { source, dest, rot_bits, mask_start: _, mask_end: _, rc } => {
                 visitor.read_gpr(source);
                 visitor.write_gpr(dest);
                 visitor.read_gpr(rot_bits);
+                if rc {
+                    visitor.write_crf(Crf(0));
+                }
             },
-            Instruction::Rlwinm { source, dest, rot_bits: _, mask_start: _, mask_end: _, rc: _ } => {
+            Instruction::Rlwinm { source, dest, rot_bits: _, mask_start: _, mask_end: _, rc } => {
                 visitor.read_gpr(source);
                 visitor.write_gpr(dest);
+                if rc {
+                    visitor.write_crf(Crf(0));
+                }
             },
             Instruction::Addis { dest, add, imm: _ } => {
                 if let Some(gpr) = add {
@@ -541,8 +595,14 @@ impl Instruction {
                 visitor.read_gpr(source_b);
                 visitor.write_crf(crf);
             },
-            Instruction::Bc { bo: _, bi: _, target: _, mode: _, link: _ } => {},
-            Instruction::Bclr { bo: _, bi: _, link: _ } => {},
+            Instruction::Bc { bo: _, bi, target: _, mode: _, link: _ } => {
+                let (crf, crb) = crb_from_index(bi);
+                visitor.read_crb(crf, crb);
+            },
+            Instruction::Bclr { bo: _, bi, link: _ } => {
+                let (crf, crb) = crb_from_index(bi);
+                visitor.read_crb(crf, crb);
+            },
             Instruction::Stwu { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(dest);
@@ -553,10 +613,13 @@ impl Instruction {
                 visitor.read_gpr(dest);
                 visitor.read_gpr(index);
             },
-            Instruction::Subf { dest, source_b, source_a, oe: _, rc: _ } => {
+            Instruction::Subf { dest, source_b, source_a, oe: _, rc } => {
                 visitor.read_gpr(source_a);
                 visitor.read_gpr(source_b);
                 visitor.write_gpr(dest);
+                if rc {
+                    visitor.write_crf(Crf(0));
+                }
             },
             Instruction::Mfspr { dest, spr } => {
                 visitor.write_gpr(dest);
@@ -574,10 +637,13 @@ impl Instruction {
                 visitor.read_gpr(source);
                 visitor.write_spr(Spr::Msr);
             },
-            Instruction::Or { source, dest, or_with, rc: _ } => {
+            Instruction::Or { source, dest, or_with, rc } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(or_with);
                 visitor.write_gpr(dest);
+                if rc {
+                    visitor.write_crf(Crf(0));
+                }
             },
             Instruction::And { source1, source2, dest } => {
                 visitor.read_gpr(source1);
@@ -606,8 +672,11 @@ impl Instruction {
                 visitor.read_gpr(source);
                 visitor.write_gpr(dest);
             },
-            Instruction::Mtfsb1 { crf, rc: _ } => {
+            Instruction::Mtfsb1 { crf, rc } => {
                 visitor.write_crf(crf);
+                if rc {
+                    visitor.write_crf(Crf(1));
+                }
             },
             Instruction::Lmw { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
@@ -624,19 +693,32 @@ impl Instruction {
                 visitor.write_gpr(dest);
                 visitor.read_gpr(source);
             },
-            Instruction::Neg { dest, source, rc: _, oe: _ } => {
+            Instruction::Neg { dest, source, rc, oe } => {
                 visitor.read_gpr(source);
                 visitor.write_gpr(dest);
+                if oe {
+                    visitor.write_spr(Spr::Xer);
+                }
+                if rc {
+                    visitor.write_crf(Crf(0));
+                }
             },
             Instruction::Crxor { crb_dest, crb_a, crb_b } => {
-                visitor.write_crb(crb_dest);
-                visitor.read_crb(crb_a);
-                visitor.read_crb(crb_b);
+                let (crf_dest, crb_dest) = crb_from_index(crb_dest);
+                let (crf_a, crb_a) = crb_from_index(crb_a);
+                let (crf_b, crb_b) = crb_from_index(crb_b);
+
+                visitor.read_crb(crf_a, crb_a);
+                visitor.read_crb(crf_b, crb_b);
+                visitor.write_crb(crf_dest, crb_dest);
             },
-            Instruction::Add { dest, source_a, source_b, oe: _, rc: _ } => {
+            Instruction::Add { dest, source_a, source_b, oe: _, rc } => {
                 visitor.read_gpr(source_a);
                 visitor.read_gpr(source_b);
                 visitor.write_gpr(dest);
+                if rc {
+                    visitor.write_crf(Crf(0));
+                }
             },
         }
     }

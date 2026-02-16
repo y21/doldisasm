@@ -56,6 +56,7 @@ pub trait Dataflow: Sized {
     type Idx: Hash + Eq + Copy;
     type BlockState: Clone + Default + PartialEq;
     type BlockItem;
+    type RecordingState: Default;
 
     fn compute_preds_and_succs(&self, preds: &mut Predecessors<Self>, succs: &mut Successors<Self>);
     fn initial_idx() -> Self::Idx;
@@ -63,6 +64,16 @@ pub trait Dataflow: Sized {
     fn iter_block(&self, block: Self::Idx) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
     fn iter(&self) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
     fn apply_effect(&self, state: &mut Self::BlockState, idx: Self::Idx, data: &Self::BlockItem);
+    fn pre_block_record(
+        &self,
+        rec_state: &mut Self::RecordingState,
+        block_state: &mut Self::BlockState,
+    );
+    fn post_block_record(
+        &self,
+        rec_state: &mut Self::RecordingState,
+        block_state: &mut Self::BlockState,
+    );
 }
 
 pub fn run<D: Dataflow>(dataflow: &D) -> Results<D>
@@ -77,16 +88,22 @@ where
 
     dataflow.compute_preds_and_succs(&mut preds, &mut succs);
 
+    let mut record_state = D::RecordingState::default();
+
     while let Some(idx) = queue.pop() {
         let mut state = entry_states.get(&idx).cloned().unwrap_or_else(|| {
             assert_eq!(idx, D::initial_idx());
             D::BlockState::default()
         });
 
+        dataflow.pre_block_record(&mut record_state, &mut state);
+        entry_states.insert(idx, state.clone());
+
         for (idx, item) in dataflow.iter_block(idx) {
             dataflow.apply_effect(&mut state, idx, &item);
 
             if let Some(succs) = succs.get(&idx) {
+                dataflow.post_block_record(&mut record_state, &mut state);
                 // Note: `succs` may be empty for `blr` (exit blocks).
 
                 for &succ in succs {

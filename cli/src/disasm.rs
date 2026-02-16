@@ -1,25 +1,15 @@
 use anyhow::Context;
-use arrayvec::ArrayVec;
-use bumpalo::Bump;
-use dataflow::{Dataflow, Predecessors, SuccessorTarget, Successors};
 use dol::Dol;
-use ppc32::{
-    Instruction,
-    instruction::{BranchOptions, Gpr, Immediate, RegisterVisitor, Spr, compute_branch_target},
-};
-use std::{array, collections::BTreeMap, iter, ops::Deref, panic::Location};
-use std::{fmt::Write, marker::PhantomData};
-use typed_index_collections::{TiSlice, TiVec};
+use std::iter;
 
 use crate::{
     args::{AddrRange, DisassemblyLanguage},
     ast::{self, build::AstBuildParams, write::StringWriter},
-    decoder::{Address, Decoder},
+    decoder::Decoder,
     flow::{
         Instructions,
-        local_generation::{BlockState, LocalGenerationAnalysis},
+        local_generation::{LocalGenerationAnalysis, def_use_map},
     },
-    value::{Parameter, Value, ValueInner},
 };
 
 pub fn disasm(dol: &Dol, range: AddrRange, lang: DisassemblyLanguage) -> anyhow::Result<()> {
@@ -63,12 +53,15 @@ fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
         insts: &insts,
         fn_address,
     };
-    let mut local_generations = dataflow::run(&analysis);
+    let local_generations = dataflow::run(&analysis);
+
+    let def_use_map = def_use_map(&analysis, &local_generations);
 
     let ast = ast::build(AstBuildParams {
         instructions: &insts,
         local_generations: &local_generations,
         analysis: &analysis,
+        def_use_map: &def_use_map,
     });
 
     let mut output = StringWriter::new();

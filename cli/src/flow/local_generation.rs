@@ -1,10 +1,16 @@
-use dataflow::{Dataflow, Predecessors, SuccessorTarget, Successors};
+use std::{collections::HashMap, iter};
+
+use dataflow::{Dataflow, Predecessors, Results, SuccessorTarget, Successors};
 use ppc32::{
     Instruction,
     instruction::{Register, RegisterVisitor, compute_branch_target},
 };
 
-use crate::flow::{InstId, InstructionsDeref, register_state::RegisterState, ti_iter};
+use crate::flow::{
+    InstId, InstructionsDeref,
+    register_state::{CrFieldState, RegisterState},
+    ti_iter,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RegisterWithGeneration {
@@ -12,9 +18,17 @@ pub struct RegisterWithGeneration {
     pub generation: u32,
 }
 
-#[derive(Default, PartialEq, Eq, Clone, Debug)]
+#[derive(Default, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LocalRegisterState {
     pub generation: u32,
+    pub highest_generation: u32,
+}
+
+impl LocalRegisterState {
+    pub fn next_generation(&mut self) {
+        self.highest_generation += 1;
+        self.generation = self.highest_generation;
+    }
 }
 
 #[derive(Default, PartialEq, Eq, Clone, Debug)]
@@ -27,10 +41,44 @@ pub struct LocalGenerationAnalysis<'a> {
     pub fn_address: u32,
 }
 
+#[derive(Default)]
+pub struct RecordingState {
+    pub register_generations: RegisterState<u32>,
+}
+
 impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
     type Idx = InstId;
     type BlockState = BlockState;
     type BlockItem = Instruction;
+    type RecordingState = RecordingState;
+
+    fn pre_block_record(
+        &self,
+        record_state: &mut Self::RecordingState,
+        block_state: &mut Self::BlockState,
+    ) {
+        iter::zip(
+            record_state.register_generations.states_iter(),
+            block_state.registers.states_iter(),
+        )
+        .for_each(|(record_gen, block_gen)| {
+            block_gen.highest_generation = *record_gen;
+        });
+    }
+
+    fn post_block_record(
+        &self,
+        record_state: &mut Self::RecordingState,
+        block_state: &mut Self::BlockState,
+    ) {
+        iter::zip(
+            record_state.register_generations.states_iter(),
+            block_state.registers.states_iter(),
+        )
+        .for_each(|(record_gen, block_gen)| {
+            *record_gen = block_gen.highest_generation;
+        });
+    }
 
     fn compute_preds_and_succs(
         &self,
@@ -94,25 +142,26 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
             state: &'a mut <LocalGenerationAnalysis<'b> as Dataflow>::BlockState,
         }
         impl<'a, 'b> RegisterVisitor for Vis<'a, 'b> {
-            fn write_crb(&mut self, crb: ppc32::instruction::Crb) {
-                // let field = crb.0 / 8;
-                // let bit = crb.0 % 8;
-                // self.state.registers.sprs.cr[]
-                todo!()
+            fn write_crb(&mut self, crf: ppc32::instruction::Crf, crb: ppc32::instruction::Crb) {
+                self.state.registers.sprs.cr_mut(crf, crb).next_generation();
             }
-            fn write_crf(&mut self, _crf: ppc32::instruction::Crf) {
-                // println!("Write to {_crf:?}");
-                todo!()
+            fn write_crf(&mut self, crf: ppc32::instruction::Crf) {
+                let CrFieldState { lt, gt, eq, so } =
+                    &mut self.state.registers.sprs.cr[crf.0 as usize];
+                lt.next_generation();
+                gt.next_generation();
+                eq.next_generation();
+                so.next_generation();
             }
             fn write_gpr(&mut self, gpr: ppc32::instruction::Gpr) {
-                self.state.registers.gprs[gpr.0 as usize].generation += 1;
+                self.state.registers.gprs[gpr.0 as usize].next_generation();
             }
             fn write_spr(&mut self, spr: ppc32::instruction::Spr) {
                 match spr {
                     ppc32::instruction::Spr::Xer => todo!(),
-                    ppc32::instruction::Spr::Lr => self.state.registers.sprs.lr.generation += 1,
+                    ppc32::instruction::Spr::Lr => self.state.registers.sprs.lr.next_generation(),
                     ppc32::instruction::Spr::Ctr => todo!(),
-                    ppc32::instruction::Spr::Msr => self.state.registers.sprs.msr.generation += 1,
+                    ppc32::instruction::Spr::Msr => self.state.registers.sprs.msr.next_generation(),
                     ppc32::instruction::Spr::Pc => todo!(),
                     ppc32::instruction::Spr::Other(_) => todo!(),
                 }
@@ -120,4 +169,106 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         }
         data.visit_registers(Vis { state });
     }
+}
+
+type InnerDefUseMap = HashMap<RegisterWithGeneration, Vec<InstId>>;
+
+#[derive(Debug)]
+pub struct DefUseMap {
+    map: InnerDefUseMap,
+}
+
+impl DefUseMap {
+    pub fn uses_of(&self, reg: Register, generation: u32) -> &[InstId] {
+        self.map
+            .get(&RegisterWithGeneration { reg, generation })
+            .map(|v| v.as_slice())
+            .unwrap_or_default()
+    }
+
+    pub fn has_uses(&self, reg: Register, generation: u32) -> bool {
+        !self.uses_of(reg, generation).is_empty()
+    }
+}
+
+pub fn def_use_map<'a>(
+    analysis: &LocalGenerationAnalysis<'a>,
+    results: &Results<LocalGenerationAnalysis<'a>>,
+) -> DefUseMap {
+    let mut map = HashMap::new();
+
+    results.for_each_with_input(analysis, |inst_id, inst, state| {
+        struct Vis<'a> {
+            inst_id: InstId,
+            map: &'a mut InnerDefUseMap,
+            state: &'a BlockState,
+        }
+
+        impl<'a> Vis<'a> {
+            pub fn register_use(&mut self, reg: Register, generation: u32) {
+                let uses = self
+                    .map
+                    .entry(RegisterWithGeneration { reg, generation })
+                    .or_default();
+                if !uses.contains(&self.inst_id) {
+                    uses.push(self.inst_id);
+                }
+            }
+        }
+
+        impl RegisterVisitor for Vis<'_> {
+            fn read_crb(&mut self, crf: ppc32::instruction::Crf, crb: ppc32::instruction::Crb) {
+                self.register_use(
+                    Register::Cr(crf, crb),
+                    self.state.registers.sprs.cr(crf, crb).generation,
+                );
+            }
+            fn read_crf(&mut self, crf: ppc32::instruction::Crf) {
+                let field = &self.state.registers.sprs.cr[crf.0 as usize];
+                self.register_use(
+                    Register::Cr(crf, ppc32::instruction::Crb::Negative),
+                    field.lt.generation,
+                );
+                self.register_use(
+                    Register::Cr(crf, ppc32::instruction::Crb::Positive),
+                    field.gt.generation,
+                );
+                self.register_use(
+                    Register::Cr(crf, ppc32::instruction::Crb::Zero),
+                    field.eq.generation,
+                );
+                self.register_use(
+                    Register::Cr(crf, ppc32::instruction::Crb::Overflow),
+                    field.so.generation,
+                );
+            }
+            fn read_gpr(&mut self, gpr: ppc32::instruction::Gpr) {
+                self.register_use(
+                    Register::Gpr(gpr),
+                    self.state.registers.gprs[gpr.0 as usize].generation,
+                );
+            }
+            fn read_spr(&mut self, spr: ppc32::instruction::Spr) {
+                self.register_use(
+                    Register::Spr(spr),
+                    match spr {
+                        ppc32::instruction::Spr::Xer => todo!(),
+                        ppc32::instruction::Spr::Lr => self.state.registers.sprs.lr.generation,
+                        ppc32::instruction::Spr::Ctr => todo!(),
+                        ppc32::instruction::Spr::Msr => self.state.registers.sprs.msr.generation,
+                        ppc32::instruction::Spr::Pc => todo!(),
+                        ppc32::instruction::Spr::Other(_) => todo!(),
+                    },
+                );
+            }
+        }
+
+        inst.visit_registers(Vis {
+            inst_id,
+            map: &mut map,
+            state,
+        });
+    });
+
+    DefUseMap { map }
 }

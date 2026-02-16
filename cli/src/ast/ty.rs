@@ -3,5 +3,7 @@ pub struct Ty {
 }
 
 pub enum TyKind {
+    I32,
+    U32,
     Void,
 }
