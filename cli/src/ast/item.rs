@@ -11,6 +11,7 @@ pub enum ItemKind {
 }
 
 pub struct Function {
+    pub name: String,
     pub return_ty: Ty,
     pub params: Vec<Parameter>,
     pub stmts: Vec<Stmt>,

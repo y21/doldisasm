@@ -27,6 +27,7 @@ use crate::{
 };
 
 pub struct AstBuildParams<'a, 'b> {
+    pub fn_address: u32,
     pub instructions: &'a InstructionsDeref,
     pub local_generations: &'a Results<LocalGenerationAnalysis<'b>>,
     pub analysis: &'a LocalGenerationAnalysis<'a>,
@@ -123,6 +124,7 @@ impl Variables {
         key
     }
 
+    #[track_caller]
     fn mk_stack_mem_var(&mut self, offset: i16, origin: VarId) -> VarId {
         let key = self.list.push_and_get_key(Variable {
             vis: self.list[origin].vis,
@@ -148,6 +150,11 @@ struct StackRelativeAddress {
     offset: i16,
 }
 
+struct BuildPathResult {
+    stmts: Vec<Stmt>,
+    has_return_value: bool,
+}
+
 fn build_path(
     instructions: &InstructionsDeref,
     idx: InstId,
@@ -155,7 +162,7 @@ fn build_path(
     analysis: &LocalGenerationAnalysis<'_>,
     variables: &mut Variables,
     def_use_map: &DefUseMap,
-) -> Vec<Stmt> {
+) -> BuildPathResult {
     let mut state = local_generations.get(idx).map_or_else(
         || {
             assert_eq!(idx, InstId(0));
@@ -165,6 +172,7 @@ fn build_path(
     );
 
     let mut stmts = Vec::new();
+    let mut has_return_value = false;
 
     for (idx, (inst_addr, instruction)) in ti_iter(&instructions[idx..]) {
         match *instruction {
@@ -373,7 +381,10 @@ fn build_path(
 
                 analysis.apply_effect(&mut state, idx, instruction);
 
-                let then_stmts = build_path(
+                let BuildPathResult {
+                    stmts: then_stmts,
+                    has_return_value: then_has_return_value,
+                } = build_path(
                     instructions,
                     true_idx,
                     local_generations,
@@ -381,7 +392,10 @@ fn build_path(
                     variables,
                     def_use_map,
                 );
-                let else_stmts = build_path(
+                let BuildPathResult {
+                    stmts: else_stmts,
+                    has_return_value: else_has_return_value,
+                } = build_path(
                     instructions,
                     false_idx,
                     local_generations,
@@ -389,6 +403,8 @@ fn build_path(
                     variables,
                     def_use_map,
                 );
+
+                has_return_value |= then_has_return_value | else_has_return_value;
 
                 let mut condition = Expr {
                     kind: ExprKind::Var(condition),
@@ -413,8 +429,8 @@ fn build_path(
                 stmts.push(Stmt {
                     kind: StmtKind::If {
                         condition,
-                        then_stmts,
-                        else_stmts,
+                        then_stmts: then_stmts,
+                        else_stmts: else_stmts,
                     },
                 });
                 break;
@@ -430,16 +446,19 @@ fn build_path(
                     analysis.apply_effect(&mut state, idx, instruction);
 
                     let dest = variables.mk_gpr_var(dest, &state, source);
-                    stmts.push(Stmt {
-                        kind: StmtKind::Assign {
-                            dest: Expr {
-                                kind: ExprKind::Var(dest),
+                    let vis = variables.get(dest).vis;
+                    if vis == VariableVisibility::Visible {
+                        stmts.push(Stmt {
+                            kind: StmtKind::Assign {
+                                dest: Expr {
+                                    kind: ExprKind::Var(dest),
+                                },
+                                value: Expr {
+                                    kind: ExprKind::Var(source),
+                                },
                             },
-                            value: Expr {
-                                kind: ExprKind::Var(source),
-                            },
-                        },
-                    });
+                        });
+                    }
                 } else {
                     todo!();
                 }
@@ -463,16 +482,30 @@ fn build_path(
 
                 analysis.apply_effect(&mut state, idx, instruction);
 
-                // TODO: dont hardcode None, there may be a return value
+                let return_reg = Register::Gpr(Gpr::RETURN);
+                let return_generation = state.registers.gprs[Gpr::RETURN.0 as usize].generation;
+                let cur_has_return_value = !def_use_map.has_uses(return_reg, return_generation);
+                has_return_value |= cur_has_return_value;
+
                 stmts.push(Stmt {
-                    kind: StmtKind::Return(None),
+                    kind: StmtKind::Return(if cur_has_return_value {
+                        Some(Expr {
+                            kind: ExprKind::Var(variables.id_by_reg(return_reg, return_generation)),
+                        })
+                    } else {
+                        None
+                    }),
                 });
                 break;
             }
             _ => todo!("{instruction:?}"),
         }
     }
-    stmts
+
+    BuildPathResult {
+        stmts,
+        has_return_value,
+    }
 }
 
 pub fn build(
@@ -481,6 +514,7 @@ pub fn build(
         local_generations,
         analysis,
         def_use_map,
+        fn_address,
     }: AstBuildParams,
 ) -> Ast {
     fn add_initial_hidden_root_var(variables: &mut Variables, register: Register) {
@@ -520,7 +554,10 @@ pub fn build(
         }
     }
 
-    let stmts = build_path(
+    let BuildPathResult {
+        stmts,
+        has_return_value,
+    } = build_path(
         instructions,
         InstId(0),
         local_generations,
@@ -530,9 +567,14 @@ pub fn build(
     );
 
     let function = Function {
-        stmts,
-        return_ty: Ty { kind: TyKind::Void }, // TODO
+        name: format!("{fn_address:#x}"),
+        return_ty: if has_return_value {
+            Ty { kind: TyKind::U32 } // TODO: figure out the type based on its uses?
+        } else {
+            Ty { kind: TyKind::Void }
+        },
         params,
+        stmts,
     };
     let items = vec![Item {
         kind: ItemKind::Function(function),

@@ -11,8 +11,6 @@ use crate::ast::{
 pub trait Writer {
     fn write_str(&mut self, s: &str);
     fn write_fmt(&mut self, args: fmt::Arguments);
-    // fn write_u32(&mut self, value: u32);
-    // fn write_i32(&mut self, value: i32);
     fn with_scope(&mut self, f: &mut dyn FnMut(&mut dyn Writer));
     fn next_line(&mut self);
 }
@@ -170,11 +168,14 @@ fn write_function(
         return_ty,
         params,
         stmts,
+        name,
     }: &Function,
     writer: &mut dyn Writer,
 ) {
     write_ty(return_ty, writer);
-    writer.write_str(" func(");
+    writer.write_str(" ");
+    writer.write_str(name);
+    writer.write_str("(");
     for (i, &Parameter { ref ty, var_id }) in params.iter().enumerate() {
         if i > 0 {
             writer.write_str(", ");

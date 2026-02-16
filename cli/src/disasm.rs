@@ -58,6 +58,7 @@ fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
     let def_use_map = def_use_map(&analysis, &local_generations);
 
     let ast = ast::build(AstBuildParams {
+        fn_address,
         instructions: &insts,
         local_generations: &local_generations,
         analysis: &analysis,
