@@ -19,10 +19,9 @@ use crate::{
     },
     flow::{
         InstId, InstructionsDeref,
-        local_generation::{
-            BlockState, DefUseMap, LocalGenerationAnalysis, RegisterWithGeneration,
-        },
+        ssa::{BlockState, DefUseMap, LocalGenerationAnalysis, RegisterWithGeneration},
         ti_iter,
+        variables::Variables,
     },
 };
 
@@ -32,125 +31,7 @@ pub struct AstBuildParams<'a, 'b> {
     pub local_generations: &'a Results<LocalGenerationAnalysis<'b>>,
     pub analysis: &'a LocalGenerationAnalysis<'a>,
     pub def_use_map: &'a DefUseMap,
-}
-
-struct Variables {
-    list: TiVec<VarId, Variable>,
-    reg_to_var: HashMap<RegisterWithGeneration, VarId>,
-    mem_to_var: HashMap<StackRelativeAddress, VarId>,
-}
-
-impl Variables {
-    fn new() -> Self {
-        Self {
-            list: TiVec::new(),
-            reg_to_var: HashMap::new(),
-            mem_to_var: HashMap::new(),
-        }
-    }
-
-    fn get(&self, var: VarId) -> &Variable {
-        &self.list[var]
-    }
-
-    #[track_caller]
-    fn mk_gpr_var(&mut self, gpr: Gpr, state: &BlockState, origin: VarId) -> VarId {
-        self.mk_reg_var(
-            Register::Gpr(gpr),
-            state.registers.gprs[gpr.0 as usize].generation,
-            origin,
-        )
-    }
-
-    #[track_caller]
-    fn mk_reg_var(&mut self, reg: Register, generation: u32, origin: VarId) -> VarId {
-        let key = self.list.push_and_get_key(Variable {
-            vis: self.list[origin].vis,
-        });
-        let reg = RegisterWithGeneration { reg, generation };
-        assert!(
-            self.reg_to_var.insert(reg, key).is_none(),
-            "variable for {:?}_{:?} already exists",
-            reg.reg,
-            reg.generation
-        );
-        key
-    }
-
-    #[track_caller]
-    fn mk_root_gpr_var(&mut self, gpr: Gpr, state: &BlockState, vis: VariableVisibility) -> VarId {
-        self.mk_root_reg_var(
-            Register::Gpr(gpr),
-            state.registers.gprs[gpr.0 as usize].generation,
-            vis,
-        )
-    }
-
-    #[track_caller]
-    fn mk_root_reg_var(
-        &mut self,
-        reg: Register,
-        generation: u32,
-        vis: VariableVisibility,
-    ) -> VarId {
-        let key = self.list.push_and_get_key(Variable { vis });
-        let reg = RegisterWithGeneration { reg, generation };
-        assert!(self.reg_to_var.insert(reg, key).is_none());
-        key
-    }
-
-    #[track_caller]
-    fn id_by_gpr(&mut self, reg: Gpr, state: &BlockState) -> VarId {
-        self.id_by_reg(
-            Register::Gpr(reg),
-            state.registers.gprs[reg.0 as usize].generation,
-        )
-    }
-
-    fn optional_id_by_reg(&mut self, reg: Register, generation: u32) -> Option<VarId> {
-        let reg = RegisterWithGeneration { reg, generation };
-        self.reg_to_var.get(&reg).copied()
-    }
-
-    #[track_caller]
-    fn id_by_reg(&mut self, reg: Register, generation: u32) -> VarId {
-        match self.optional_id_by_reg(reg, generation) {
-            Some(var_id) => var_id,
-            None => panic!("no variable for {:?}_{:?}", reg, generation),
-        }
-    }
-
-    fn mk_root_stack_mem_var(&mut self, offset: i16, vis: VariableVisibility) -> VarId {
-        let key = self.list.push_and_get_key(Variable { vis });
-        let addr = StackRelativeAddress { offset };
-        assert!(self.mem_to_var.insert(addr, key).is_none());
-        key
-    }
-
-    #[track_caller]
-    fn mk_stack_mem_var(&mut self, offset: i16, origin: VarId) -> VarId {
-        let key = self.list.push_and_get_key(Variable {
-            vis: self.list[origin].vis,
-        });
-        let addr = StackRelativeAddress { offset };
-        assert!(self.mem_to_var.insert(addr, key).is_none());
-        key
-    }
-
-    #[track_caller]
-    fn id_by_stack_mem(&mut self, offset: i16) -> VarId {
-        let addr = StackRelativeAddress { offset };
-
-        match self.mem_to_var.get(&addr) {
-            Some(var_id) => *var_id,
-            None => panic!("no variable for stack-relative addr {addr:?}"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct StackRelativeAddress {
-    offset: i16,
+    pub variables: &'a mut Variables, // TODO: immutable
 }
 
 struct BuildPathResult {
@@ -533,19 +414,19 @@ pub fn build(
         analysis,
         def_use_map,
         fn_address,
+        variables,
     }: AstBuildParams,
 ) -> Ast {
     fn add_initial_hidden_root_var(variables: &mut Variables, register: Register) {
         variables.mk_root_reg_var(register, 0, VariableVisibility::Hidden);
     }
-    let mut variables = Variables::new();
 
-    add_initial_hidden_root_var(&mut variables, Register::Gpr(Gpr::STACK_POINTER));
-    add_initial_hidden_root_var(&mut variables, Register::Spr(Spr::Lr));
+    add_initial_hidden_root_var(variables, Register::Gpr(Gpr::STACK_POINTER));
+    add_initial_hidden_root_var(variables, Register::Spr(Spr::Lr));
 
     for reg in 14..=31 {
         // Callee saved registers are hidden
-        add_initial_hidden_root_var(&mut variables, Register::Gpr(Gpr(reg)));
+        add_initial_hidden_root_var(variables, Register::Gpr(Gpr(reg)));
     }
 
     // Infer parameters
@@ -580,7 +461,7 @@ pub fn build(
         InstId(0),
         local_generations,
         analysis,
-        &mut variables,
+        variables,
         def_use_map,
     );
 

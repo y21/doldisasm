@@ -8,7 +8,8 @@ use crate::{
     decoder::Decoder,
     flow::{
         Instructions,
-        local_generation::{LocalGenerationAnalysis, def_use_map},
+        ssa::{LocalGenerationAnalysis, def_use_map},
+        variables::variable_map,
     },
 };
 
@@ -57,17 +58,19 @@ fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
 
     let def_use_map = def_use_map(&analysis, &local_generations);
 
-    let ast = ast::build(AstBuildParams {
-        fn_address,
-        instructions: &insts,
-        local_generations: &local_generations,
-        analysis: &analysis,
-        def_use_map: &def_use_map,
-    });
+    let variables = variable_map();
 
-    let mut output = StringWriter::new();
-    ast::write::write_ast(&ast, &mut output);
-    println!("{}", output.into_string());
+    // let ast = ast::build(AstBuildParams {
+    //     fn_address,
+    //     instructions: &insts,
+    //     local_generations: &local_generations,
+    //     analysis: &analysis,
+    //     def_use_map: &def_use_map,
+    // });
+
+    // let mut output = StringWriter::new();
+    // ast::write::write_ast(&ast, &mut output);
+    // println!("{}", output.into_string());
 
     Ok(())
 }

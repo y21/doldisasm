@@ -1,4 +1,4 @@
-use crate::{ast::stmt::VarId, flow::local_generation::RegisterWithGeneration};
+use crate::{ast::stmt::VarId, flow::ssa::RegisterWithGeneration};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expr {

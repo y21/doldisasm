@@ -5,8 +5,9 @@ use typed_index_collections::{TiSlice, TiVec};
 
 use crate::decoder::Address;
 
-pub mod local_generation;
 mod register_state;
+pub mod ssa;
+pub mod variables;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InstId(pub u32);
