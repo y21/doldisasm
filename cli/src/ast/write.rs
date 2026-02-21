@@ -93,12 +93,10 @@ fn write_expr(expr: &Expr, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
         }
         ExprKind::Unary(UnaryExpr { op, ref operand }) => {
             match op {
-                UnaryOp::Neg => writer.write_str("-"),
                 UnaryOp::Not => writer.write_str("!"),
             }
             write_expr(operand, cx, writer);
         }
-        ExprKind::Immediate32(value) => writer.write_fmt(format_args!("{}", value)),
         ExprKind::Immediate16(value) => writer.write_fmt(format_args!("{}", value)),
         ExprKind::FnCall(FnCallTarget::Addr(addr), ref args) => {
             writer.write_fmt(format_args!("{:#X}", addr));
@@ -143,7 +141,7 @@ fn write_stmt(stmt: &Stmt, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
             writer.write_str(") {");
 
             writer.with_scope(&mut |writer| {
-                for (i, stmt) in then_stmts.iter().enumerate() {
+                for stmt in then_stmts.iter() {
                     writer.next_line();
                     write_stmt(stmt, cx, writer);
                 }
@@ -154,7 +152,7 @@ fn write_stmt(stmt: &Stmt, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
             if !else_stmts.is_empty() {
                 writer.write_str(" else {");
                 writer.with_scope(&mut |writer| {
-                    for (i, stmt) in else_stmts.iter().enumerate() {
+                    for stmt in else_stmts.iter() {
                         writer.next_line();
                         write_stmt(stmt, cx, writer);
                     }
@@ -169,7 +167,6 @@ fn write_stmt(stmt: &Stmt, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
 fn write_ty(ty: &ty::Ty, writer: &mut dyn Writer) {
     match ty.kind {
         TyKind::Void => writer.write_str("void"),
-        TyKind::I32 => writer.write_str("i32"),
         TyKind::U32 => writer.write_str("u32"),
     }
 }

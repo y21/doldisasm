@@ -122,7 +122,7 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         InstId(0)
     }
 
-    fn join_states(a: &Self::BlockState, b: &Self::BlockState) -> Self::BlockState {
+    fn join_states(_: &Self::BlockState, _: &Self::BlockState) -> Self::BlockState {
         todo!()
     }
 
@@ -137,7 +137,7 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         self.iter().skip(idx as usize)
     }
 
-    fn apply_effect(&self, state: &mut Self::BlockState, idx: Self::Idx, data: &Self::BlockItem) {
+    fn apply_effect(&self, state: &mut Self::BlockState, _: Self::Idx, data: &Self::BlockItem) {
         struct Vis<'a, 'b> {
             state: &'a mut <LocalGenerationAnalysis<'b> as Dataflow>::BlockState,
         }

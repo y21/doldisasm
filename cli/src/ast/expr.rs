@@ -1,4 +1,4 @@
-use crate::{ast::stmt::VarId, flow::ssa::RegisterWithGeneration};
+use crate::ast::stmt::VarId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expr {
@@ -10,7 +10,6 @@ pub enum ExprKind {
     Var(VarId),
     Unary(UnaryExpr),
     Binary(BinaryExpr),
-    Immediate32(i32),
     Immediate16(i16),
     FnCall(FnCallTarget, Vec<Expr>),
 }
@@ -43,6 +42,5 @@ pub struct UnaryExpr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Neg,
     Not,
 }

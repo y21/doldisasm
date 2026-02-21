@@ -171,7 +171,6 @@ fn visit_path(
     );
 
     for (idx, (inst_addr, inst)) in ti_iter(&instructions[start_index..]) {
-        println!("{:x?}", inst_addr);
         match *inst {
             Instruction::Stwu {
                 source,
@@ -246,8 +245,8 @@ fn visit_path(
                 }
             }
             Instruction::Bc {
-                bo,
-                bi,
+                bo: _,
+                bi: _,
                 target,
                 mode,
                 link,
