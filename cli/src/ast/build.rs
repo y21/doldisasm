@@ -107,13 +107,16 @@ impl Variables {
         )
     }
 
+    fn optional_id_by_reg(&mut self, reg: Register, generation: u32) -> Option<VarId> {
+        let reg = RegisterWithGeneration { reg, generation };
+        self.reg_to_var.get(&reg).copied()
+    }
+
     #[track_caller]
     fn id_by_reg(&mut self, reg: Register, generation: u32) -> VarId {
-        let reg = RegisterWithGeneration { reg, generation };
-
-        match self.reg_to_var.get(&reg) {
-            Some(var_id) => *var_id,
-            None => panic!("no variable for {:?}_{:?}", reg.reg, reg.generation),
+        match self.optional_id_by_reg(reg, generation) {
+            Some(var_id) => var_id,
+            None => panic!("no variable for {:?}_{:?}", reg, generation),
         }
     }
 
@@ -276,12 +279,14 @@ fn build_path(
                 }
             }
             Instruction::Addi { dest, source, imm } => {
+                println!("{:#x} addi", inst_addr.0);
                 let source = variables.id_by_gpr(source, &state);
 
                 analysis.apply_effect(&mut state, idx, instruction);
 
                 let dest = variables.mk_gpr_var(dest, &state, source);
                 let visibility = variables.get(dest).vis;
+                dbg!(visibility);
 
                 if visibility == VariableVisibility::Visible {
                     stmts.push(Stmt {
@@ -336,6 +341,22 @@ fn build_path(
                 let target = compute_branch_target(inst_addr.0, mode, target);
                 if link {
                     // Function call. Probably.
+
+                    // Figure out arguments.
+                    let mut arguments = Vec::new();
+                    for reg in 3..=8 {
+                        let register = Register::Gpr(Gpr(reg));
+                        let generation = state.registers.gprs[reg as usize].generation;
+                        if let Some(var_id) = variables.optional_id_by_reg(register, generation)
+                            && !def_use_map.has_uses(register, generation)
+                        {
+                            println!("{:#x} r{reg} = v{}", inst_addr.0, var_id.0);
+                            arguments.push(Expr {
+                                kind: ExprKind::Var(var_id),
+                            });
+                        }
+                    }
+
                     analysis.apply_effect(&mut state, idx, instruction);
 
                     // TODO: check if r3 with this generation is used anywhere to tell if it even returns a value at all.
@@ -347,10 +368,7 @@ fn build_path(
                                 kind: ExprKind::Var(return_var),
                             },
                             value: Expr {
-                                kind: ExprKind::FnCall(
-                                    FnCallTarget::Addr(target),
-                                    Vec::new(), // TODO: figure out how to detect what parameters the fn takes?
-                                ),
+                                kind: ExprKind::FnCall(FnCallTarget::Addr(target), arguments),
                             },
                         },
                     });
