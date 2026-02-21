@@ -4,12 +4,16 @@ use std::iter;
 
 use crate::{
     args::{AddrRange, DisassemblyLanguage},
-    ast::{self, build::AstBuildParams, write::StringWriter},
+    ast::{
+        self,
+        build::AstBuildParams,
+        write::{StringWriter, WriteContext},
+    },
     decoder::Decoder,
     flow::{
         Instructions,
         ssa::{LocalGenerationAnalysis, def_use_map},
-        variables::variable_map,
+        variables::infer_variables,
     },
 };
 
@@ -58,60 +62,26 @@ fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
 
     let def_use_map = def_use_map(&analysis, &local_generations);
 
-    let variables = variable_map();
+    let variables = infer_variables(&insts, &local_generations, &analysis, &def_use_map);
 
-    // let ast = ast::build(AstBuildParams {
-    //     fn_address,
-    //     instructions: &insts,
-    //     local_generations: &local_generations,
-    //     analysis: &analysis,
-    //     def_use_map: &def_use_map,
-    // });
+    let ast = ast::build(AstBuildParams {
+        fn_address,
+        instructions: &insts,
+        local_generations: &local_generations,
+        analysis: &analysis,
+        def_use_map: &def_use_map,
+        variables: &variables,
+    });
 
-    // let mut output = StringWriter::new();
-    // ast::write::write_ast(&ast, &mut output);
-    // println!("{}", output.into_string());
+    let mut output = StringWriter::new();
+    ast::write::write_ast(
+        &ast,
+        &WriteContext {
+            variables: &variables,
+        },
+        &mut output,
+    );
+    println!("{}", output.into_string());
 
     Ok(())
 }
-
-/*
-// local_generations.for_each_with_input(&analysis, |id, inst, state| {
-    //     //
-    //     println!("\n{inst:?}");
-
-    //     struct Vis<'a> {
-    //         state: &'a BlockState,
-    //     }
-    //     impl<'a> RegisterVisitor for Vis<'a> {
-    //         fn read_crb(&mut self, _crb: ppc32::instruction::Crb) {
-    //             todo!()
-    //         }
-    //         fn read_crf(&mut self, _crf: ppc32::instruction::Crf) {
-    //             todo!()
-    //         }
-    //         fn read_gpr(&mut self, gpr: Gpr) {
-    //             print!(
-    //                 "{gpr:?}_{}, ",
-    //                 self.state.registers.gprs[gpr.0 as usize].generation
-    //             );
-    //         }
-    //         fn read_spr(&mut self, spr: Spr) {
-    //             print!("{spr:?}_");
-    //             match spr {
-    //                 Spr::Xer => todo!(),
-    //                 Spr::Lr => print!("{}, ", self.state.registers.sprs.lr.generation),
-    //                 Spr::Ctr => todo!(),
-    //                 Spr::Msr => todo!(),
-    //                 Spr::Pc => todo!(),
-    //                 Spr::Other(_) => todo!(),
-    //             }
-    //         }
-    //     }
-
-    //     print!("    ");
-    //     inst.visit_registers(Vis { state });
-
-    //     println!();
-    // });
-*/

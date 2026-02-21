@@ -1,3 +1,5 @@
+use bitflags::bitflags;
+
 use crate::ast::expr::Expr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +42,41 @@ pub enum VariableVisibility {
     Hidden,
 }
 
+bitflags! {
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    pub struct VariableFlags: u8 {
+        const VISIBLE = 1 << 0;
+        const RSP = 1 << 1;
+    }
+}
+
+impl VariableFlags {
+    pub fn from_vis(vis: VariableVisibility) -> Self {
+        match vis {
+            VariableVisibility::Visible => Self::VISIBLE,
+            VariableVisibility::Hidden => Self::empty(),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Variable {
-    pub vis: VariableVisibility,
+    flags: VariableFlags,
+}
+impl Variable {
+    pub fn new(flags: VariableFlags) -> Self {
+        Self { flags }
+    }
+
+    pub fn vis(&self) -> VariableVisibility {
+        if self.flags.contains(VariableFlags::VISIBLE) {
+            VariableVisibility::Visible
+        } else {
+            VariableVisibility::Hidden
+        }
+    }
+
+    pub fn is_rsp(&self) -> bool {
+        self.flags.contains(VariableFlags::RSP)
+    }
 }

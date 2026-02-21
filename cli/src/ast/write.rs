@@ -1,11 +1,14 @@
 use core::fmt;
 
-use crate::ast::{
-    Ast,
-    expr::{BinaryExpr, BinaryOp, Expr, ExprKind, FnCallTarget, UnaryExpr, UnaryOp},
-    item::{Function, Item, ItemKind, Parameter},
-    stmt::{Stmt, StmtKind, VarId},
-    ty::{self, TyKind},
+use crate::{
+    ast::{
+        Ast,
+        expr::{BinaryExpr, BinaryOp, Expr, ExprKind, FnCallTarget, UnaryExpr, UnaryOp},
+        item::{Function, Item, ItemKind, Parameter},
+        stmt::{Stmt, StmtKind, VarId},
+        ty::{self, TyKind},
+    },
+    flow::variables::Variables,
 };
 
 pub trait Writer {
@@ -13,6 +16,10 @@ pub trait Writer {
     fn write_fmt(&mut self, args: fmt::Arguments);
     fn with_scope(&mut self, f: &mut dyn FnMut(&mut dyn Writer));
     fn next_line(&mut self);
+}
+
+pub struct WriteContext<'a> {
+    pub variables: &'a Variables,
 }
 
 pub struct StringWriter {
@@ -57,35 +64,39 @@ impl Writer for StringWriter {
     }
 }
 
-fn write_var_id(var_id: VarId, writer: &mut dyn Writer) {
-    writer.write_fmt(format_args!("v{}", var_id.0));
+fn write_var_id(var_id: VarId, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
+    if cx.variables.get(var_id).is_rsp() {
+        writer.write_str("__RSP__");
+    } else {
+        writer.write_fmt(format_args!("v{}", var_id.0));
+    }
 }
 
-fn write_expr(expr: &Expr, writer: &mut dyn Writer) {
+fn write_expr(expr: &Expr, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
     match expr.kind {
         ExprKind::Var(var_id) => {
-            write_var_id(var_id, writer);
+            write_var_id(var_id, cx, writer);
         }
         ExprKind::Binary(BinaryExpr {
             ref left,
             op,
             ref right,
         }) => {
-            write_expr(left, writer);
+            write_expr(left, cx, writer);
             match op {
                 BinaryOp::Add => writer.write_str(" + "),
                 BinaryOp::Lt => writer.write_str(" < "),
                 BinaryOp::Gt => writer.write_str(" > "),
                 BinaryOp::Eq => writer.write_str(" == "),
             }
-            write_expr(right, writer);
+            write_expr(right, cx, writer);
         }
         ExprKind::Unary(UnaryExpr { op, ref operand }) => {
             match op {
                 UnaryOp::Neg => writer.write_str("-"),
                 UnaryOp::Not => writer.write_str("!"),
             }
-            write_expr(operand, writer);
+            write_expr(operand, cx, writer);
         }
         ExprKind::Immediate32(value) => writer.write_fmt(format_args!("{}", value)),
         ExprKind::Immediate16(value) => writer.write_fmt(format_args!("{}", value)),
@@ -96,29 +107,29 @@ fn write_expr(expr: &Expr, writer: &mut dyn Writer) {
                 if i > 0 {
                     writer.write_str(", ");
                 }
-                write_expr(arg, writer);
+                write_expr(arg, cx, writer);
             }
             writer.write_str(")");
         }
     }
 }
 
-fn write_stmt(stmt: &Stmt, writer: &mut dyn Writer) {
+fn write_stmt(stmt: &Stmt, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
     match stmt.kind {
         StmtKind::Assign {
             ref dest,
             ref value,
         } => {
-            write_expr(dest, writer);
+            write_expr(dest, cx, writer);
             writer.write_str(" = ");
-            write_expr(value, writer);
+            write_expr(value, cx, writer);
             writer.write_str(";");
         }
         StmtKind::Return(ref expr) => {
             writer.write_str("return");
             if let Some(expr) = expr {
                 writer.write_str(" ");
-                write_expr(expr, writer);
+                write_expr(expr, cx, writer);
             }
             writer.write_str(";");
         }
@@ -128,13 +139,13 @@ fn write_stmt(stmt: &Stmt, writer: &mut dyn Writer) {
             ref else_stmts,
         } => {
             writer.write_str("if (");
-            write_expr(&condition, writer);
+            write_expr(&condition, cx, writer);
             writer.write_str(") {");
 
             writer.with_scope(&mut |writer| {
                 for (i, stmt) in then_stmts.iter().enumerate() {
                     writer.next_line();
-                    write_stmt(stmt, writer);
+                    write_stmt(stmt, cx, writer);
                 }
             });
             writer.next_line();
@@ -145,7 +156,7 @@ fn write_stmt(stmt: &Stmt, writer: &mut dyn Writer) {
                 writer.with_scope(&mut |writer| {
                     for (i, stmt) in else_stmts.iter().enumerate() {
                         writer.next_line();
-                        write_stmt(stmt, writer);
+                        write_stmt(stmt, cx, writer);
                     }
                 });
                 writer.next_line();
@@ -170,6 +181,7 @@ fn write_function(
         stmts,
         name,
     }: &Function,
+    cx: &WriteContext<'_>,
     writer: &mut dyn Writer,
 ) {
     write_ty(return_ty, writer);
@@ -182,27 +194,27 @@ fn write_function(
         }
         write_ty(ty, writer);
         writer.write_str(" ");
-        write_var_id(var_id, writer);
+        write_var_id(var_id, cx, writer);
     }
     writer.write_str(") {");
     writer.with_scope(&mut |writer| {
         for stmt in stmts.iter() {
             writer.next_line();
-            write_stmt(stmt, writer);
+            write_stmt(stmt, cx, writer);
         }
     });
     writer.next_line();
     writer.write_str("}");
 }
 
-fn write_item(item: &Item, writer: &mut dyn Writer) {
+fn write_item(item: &Item, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
     match item.kind {
-        ItemKind::Function(ref function) => write_function(function, writer),
+        ItemKind::Function(ref function) => write_function(function, cx, writer),
     }
 }
 
-pub fn write_ast(Ast { items }: &Ast, writer: &mut dyn Writer) {
+pub fn write_ast(Ast { items }: &Ast, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
     for item in items {
-        write_item(item, writer);
+        write_item(item, cx, writer);
     }
 }

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use dataflow::{Dataflow, Results};
 use ppc32::{
     Instruction,
@@ -7,21 +5,20 @@ use ppc32::{
         BranchOptions, Crb, Crf, Gpr, Register, Spr, compute_branch_target, crb_from_index,
     },
 };
-use typed_index_collections::TiVec;
 
 use crate::{
     ast::{
         Ast,
         expr::{BinaryExpr, BinaryOp, Expr, ExprKind, FnCallTarget, UnaryExpr, UnaryOp},
         item::{Function, Item, ItemKind, Parameter},
-        stmt::{Stmt, StmtKind, VarId, Variable, VariableVisibility},
+        stmt::{Stmt, StmtKind, VarId, VariableVisibility},
         ty::{Ty, TyKind},
     },
     flow::{
         InstId, InstructionsDeref,
-        ssa::{BlockState, DefUseMap, LocalGenerationAnalysis, RegisterWithGeneration},
+        ssa::{BlockState, DefUseMap, LocalGenerationAnalysis},
         ti_iter,
-        variables::Variables,
+        variables::{Variables, cr_bits_need_variable},
     },
 };
 
@@ -31,7 +28,7 @@ pub struct AstBuildParams<'a, 'b> {
     pub local_generations: &'a Results<LocalGenerationAnalysis<'b>>,
     pub analysis: &'a LocalGenerationAnalysis<'a>,
     pub def_use_map: &'a DefUseMap,
-    pub variables: &'a mut Variables, // TODO: immutable
+    pub variables: &'a Variables,
 }
 
 struct BuildPathResult {
@@ -44,7 +41,7 @@ fn build_path(
     idx: InstId,
     local_generations: &Results<LocalGenerationAnalysis<'_>>,
     analysis: &LocalGenerationAnalysis<'_>,
-    variables: &mut Variables,
+    variables: &Variables,
     def_use_map: &DefUseMap,
 ) -> BuildPathResult {
     let mut state = local_generations.get(idx).map_or_else(
@@ -60,14 +57,14 @@ fn build_path(
 
     for (idx, (inst_addr, instruction)) in ti_iter(&instructions[idx..]) {
         match *instruction {
-            Instruction::Stwu { source, dest, imm } => {
+            Instruction::Stwu {
+                source,
+                dest,
+                imm: _,
+            } => {
                 assert!(source == Gpr::STACK_POINTER && dest == Gpr::STACK_POINTER);
 
-                let source = variables.id_by_gpr(source, &state);
                 analysis.apply_effect(&mut state, idx, instruction);
-
-                // ???
-                variables.mk_gpr_var(dest, &state, source);
             }
             Instruction::Or {
                 source,
@@ -82,8 +79,8 @@ fn build_path(
 
                     analysis.apply_effect(&mut state, idx, instruction);
 
-                    let dest = variables.mk_gpr_var(dest, &state, source);
-                    let visibility = variables.get(dest).vis;
+                    let dest = variables.id_by_gpr(dest, &state);
+                    let visibility = variables.get(dest).vis();
 
                     if visibility == VariableVisibility::Visible {
                         stmts.push(Stmt {
@@ -103,44 +100,35 @@ fn build_path(
                         assert!(visibility == VariableVisibility::Visible);
 
                         let crf = Crf(0);
-                        for crb in [Crb::Negative, Crb::Positive, Crb::Zero, Crb::Overflow] {
+                        for crb in cr_bits_need_variable(&state, def_use_map, crf) {
                             let generation = state.registers.sprs.cr(crf, crb).generation;
 
-                            let register = Register::Cr(crf, crb);
-                            let uses = def_use_map.uses_of(register, generation);
-                            if !uses.is_empty() {
-                                // This bit is used, we must create a variable for it and assign it here based on the value of `source`.
-                                let var = variables.mk_root_reg_var(
-                                    register,
-                                    generation,
-                                    VariableVisibility::Visible,
-                                );
+                            let var = variables.id_by_reg(Register::Cr(crf, crb), generation);
 
-                                stmts.push(Stmt {
-                                    kind: StmtKind::Assign {
-                                        dest: Expr {
-                                            kind: ExprKind::Var(var),
-                                        },
-                                        value: Expr {
-                                            kind: ExprKind::Binary(BinaryExpr {
-                                                op: match crb {
-                                                    Crb::Negative => BinaryOp::Lt,
-                                                    Crb::Positive => BinaryOp::Gt,
-                                                    Crb::Zero => BinaryOp::Eq,
-                                                    Crb::Overflow => todo!(),
-                                                },
-                                                left: Box::new(Expr {
-                                                    // TODO: should we do a cast to i16 here?
-                                                    kind: ExprKind::Var(dest),
-                                                }),
-                                                right: Box::new(Expr {
-                                                    kind: ExprKind::Immediate16(0),
-                                                }),
-                                            }),
-                                        },
+                            stmts.push(Stmt {
+                                kind: StmtKind::Assign {
+                                    dest: Expr {
+                                        kind: ExprKind::Var(var),
                                     },
-                                });
-                            }
+                                    value: Expr {
+                                        kind: ExprKind::Binary(BinaryExpr {
+                                            op: match crb {
+                                                Crb::Negative => BinaryOp::Lt,
+                                                Crb::Positive => BinaryOp::Gt,
+                                                Crb::Zero => BinaryOp::Eq,
+                                                Crb::Overflow => todo!(),
+                                            },
+                                            left: Box::new(Expr {
+                                                // TODO: should we do a cast to i16 here?
+                                                kind: ExprKind::Var(dest),
+                                            }),
+                                            right: Box::new(Expr {
+                                                kind: ExprKind::Immediate16(0),
+                                            }),
+                                        }),
+                                    },
+                                },
+                            });
                         }
                     }
                 } else {
@@ -148,26 +136,21 @@ fn build_path(
                     todo!()
                 }
             }
-            Instruction::Mfspr { dest, spr } => {
+            Instruction::Mfspr { dest: _, spr } => {
                 if let Spr::Lr = spr {
                     // Probably nothing to do?
-                    let generation = state.registers.sprs.lr.generation;
-                    let spr = variables.id_by_reg(Register::Spr(spr), generation);
                     analysis.apply_effect(&mut state, idx, instruction);
-                    variables.mk_gpr_var(dest, &state, spr);
                 } else {
                     todo!("{instruction:?}"); // TODO: make sure to have apply_effect here too
                 }
             }
             Instruction::Addi { dest, source, imm } => {
-                println!("{:#x} addi", inst_addr.0);
                 let source = variables.id_by_gpr(source, &state);
 
                 analysis.apply_effect(&mut state, idx, instruction);
 
-                let dest = variables.mk_gpr_var(dest, &state, source);
-                let visibility = variables.get(dest).vis;
-                dbg!(visibility);
+                let dest = variables.id_by_gpr(dest, &state);
+                let visibility = variables.get(dest).vis();
 
                 if visibility == VariableVisibility::Visible {
                     stmts.push(Stmt {
@@ -198,8 +181,8 @@ fn build_path(
 
                     analysis.apply_effect(&mut state, idx, instruction);
 
-                    let dest: VarId = variables.mk_stack_mem_var(imm.0, source);
-                    let vis = variables.get(dest).vis;
+                    let dest: VarId = variables.id_by_stack_mem(imm.0);
+                    let vis = variables.get(dest).vis();
 
                     // Don't create an assignment if this is just saving a callee-saved register
                     if vis == VariableVisibility::Visible {
@@ -231,7 +214,6 @@ fn build_path(
                         if let Some(var_id) = variables.optional_id_by_reg(register, generation)
                             && !def_use_map.has_uses(register, generation)
                         {
-                            println!("{:#x} r{reg} = v{}", inst_addr.0, var_id.0);
                             arguments.push(Expr {
                                 kind: ExprKind::Var(var_id),
                             });
@@ -241,8 +223,7 @@ fn build_path(
                     analysis.apply_effect(&mut state, idx, instruction);
 
                     // TODO: check if r3 with this generation is used anywhere to tell if it even returns a value at all.
-                    let return_var =
-                        variables.mk_root_gpr_var(Gpr::RETURN, &state, VariableVisibility::Visible);
+                    let return_var = variables.id_by_gpr(Gpr::RETURN, &state);
                     stmts.push(Stmt {
                         kind: StmtKind::Assign {
                             dest: Expr {
@@ -344,8 +325,8 @@ fn build_path(
 
                     analysis.apply_effect(&mut state, idx, instruction);
 
-                    let dest = variables.mk_gpr_var(dest, &state, source);
-                    let vis = variables.get(dest).vis;
+                    let dest = variables.id_by_gpr(dest, &state);
+                    let vis = variables.get(dest).vis();
                     if vis == VariableVisibility::Visible {
                         stmts.push(Stmt {
                             kind: StmtKind::Assign {
@@ -362,20 +343,14 @@ fn build_path(
                     todo!();
                 }
             }
-            Instruction::Mtspr { source, spr } => {
+            Instruction::Mtspr { source: _, spr } => {
                 if let Spr::Lr = spr {
-                    let source = variables.id_by_gpr(source, &state);
                     analysis.apply_effect(&mut state, idx, instruction);
-                    variables.mk_reg_var(
-                        Register::Spr(spr),
-                        state.registers.sprs.lr.generation,
-                        source,
-                    );
                 } else {
                     todo!("{instruction:?}"); // Make sure to add apply_effect here too
                 }
             }
-            Instruction::Bclr { bo, bi, link } => {
+            Instruction::Bclr { bo, bi: _, link } => {
                 assert!(!link);
                 assert!(bo == BranchOptions::BranchAlways);
 
@@ -417,20 +392,7 @@ pub fn build(
         variables,
     }: AstBuildParams,
 ) -> Ast {
-    fn add_initial_hidden_root_var(variables: &mut Variables, register: Register) {
-        variables.mk_root_reg_var(register, 0, VariableVisibility::Hidden);
-    }
-
-    add_initial_hidden_root_var(variables, Register::Gpr(Gpr::STACK_POINTER));
-    add_initial_hidden_root_var(variables, Register::Spr(Spr::Lr));
-
-    for reg in 14..=31 {
-        // Callee saved registers are hidden
-        add_initial_hidden_root_var(variables, Register::Gpr(Gpr(reg)));
-    }
-
     // Infer parameters
-    // This needs to happen before we begin to build the AST, since this makes variables for the parameters
 
     let mut params = Vec::new();
     let mut end_of_params = false;
@@ -444,7 +406,7 @@ pub fn build(
             // TODO: this might actually be reachable if the function just doesn't use the second parameter but uses the third one.
             assert!(!end_of_params);
 
-            let var_id = variables.mk_root_reg_var(register, 0, VariableVisibility::Visible);
+            let var_id = variables.id_by_reg(register, 0);
 
             params.push(Parameter {
                 var_id,

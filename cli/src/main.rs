@@ -11,7 +11,6 @@ mod decoder;
 mod disasm;
 mod flow;
 mod trace;
-mod value;
 
 fn main() -> anyhow::Result<()> {
     let Args {
