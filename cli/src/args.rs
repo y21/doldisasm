@@ -1,4 +1,5 @@
 use anyhow::Context;
+use decomp::decoder::{AddrRange, AddrRangeEnd};
 use pico_args::Arguments;
 use std::{num::ParseIntError, path::PathBuf, str::FromStr};
 
@@ -62,15 +63,6 @@ impl FromStr for DisassemblyLanguage {
         }
     }
 }
-
-#[derive(Debug, Copy, Clone)]
-pub enum AddrRangeEnd {
-    Unbounded,
-    Bounded(u32),
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct AddrRange(pub u32, pub AddrRangeEnd);
 
 fn parse_addr_range(source: &str) -> anyhow::Result<AddrRange> {
     fn parse_hex(s: &str) -> Result<u32, ParseIntError> {

@@ -1,21 +1,21 @@
 use anyhow::Context;
-use dol::Dol;
-use std::iter;
-
-use crate::{
-    args::{AddrRange, DisassemblyLanguage},
+use decomp::{
     ast::{
         self,
         build::AstBuildParams,
         write::{StringWriter, WriteContext},
     },
-    decoder::Decoder,
-    flow::{
-        Instructions,
+    dataflow::{
+        self, Instructions,
         ssa::{LocalGenerationAnalysis, def_use_map},
         variables::infer_variables,
     },
+    decoder::{AddrRange, Decoder},
 };
+use dol::Dol;
+use std::iter;
+
+use crate::args::DisassemblyLanguage;
 
 pub fn disasm(dol: &Dol, range: AddrRange, lang: DisassemblyLanguage) -> anyhow::Result<()> {
     let buffer = dol
@@ -48,6 +48,7 @@ fn disasm_asm(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Disassemble as C code.
 fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
     let fn_address = decoder.address().0;
     let insts: Instructions = iter::from_fn(|| decoder.next_instruction_with_offset().transpose())
@@ -58,7 +59,7 @@ fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
         insts: &insts,
         fn_address,
     };
-    let local_generations = dataflow::run(&analysis);
+    let local_generations = dataflow::core::run(&analysis);
 
     let def_use_map = def_use_map(&analysis, &local_generations);
 

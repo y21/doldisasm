@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["cli", "dataflow", "dol", "ppc32"]
+members = ["cli", "decomp", "dol", "ppc32"]

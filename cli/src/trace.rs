@@ -1,8 +1,5 @@
-use crate::{
-    args::{AddrRange, AddrRangeEnd},
-    decoder::{Address, Decoder},
-};
 use anyhow::Context;
+use decomp::decoder::{AddrRange, AddrRangeEnd, Address, Decoder};
 use dol::Dol;
 
 pub fn trace(dol: &Dol, start_addr: AddrRange) -> anyhow::Result<()> {

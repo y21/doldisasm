@@ -8,7 +8,7 @@ use crate::{
         stmt::{Stmt, StmtKind, VarId},
         ty::{self, TyKind},
     },
-    flow::variables::Variables,
+    dataflow::variables::Variables,
 };
 
 pub trait Writer {

@@ -1,13 +1,16 @@
-use std::{collections::HashMap, iter};
+use std::{
+    collections::HashMap,
+    iter::{self},
+};
 
-use dataflow::{Dataflow, ForEachCtxt, Predecessors, Results, SuccessorTarget, Successors};
 use ppc32::{
     Instruction,
     instruction::{Crb, Register, RegisterVisitor, Spr, compute_branch_target},
 };
 
-use crate::flow::{
+use crate::dataflow::{
     InstId, InstructionsDeref,
+    core::{Dataflow, ForEachCtxt, Predecessors, Results, SuccessorTarget, Successors},
     register_state::{CrFieldState, RegisterState},
     ti_iter,
 };

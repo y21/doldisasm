@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use arrayvec::ArrayVec;
-use dataflow::{Dataflow, Results};
 use ppc32::{
     Instruction,
     instruction::{BranchOptions, Crb, Crf, Gpr, Register, Spr, compute_branch_target},
@@ -10,8 +9,9 @@ use typed_index_collections::TiVec;
 
 use crate::{
     ast::stmt::{VarId, Variable, VariableFlags, VariableVisibility},
-    flow::{
+    dataflow::{
         InstId, InstructionsDeref,
+        core::{Dataflow, Results},
         ssa::{BlockState, DefUseMap, LocalGenerationAnalysis, RegisterWithGeneration},
         ti_iter,
     },

@@ -1,15 +1,13 @@
 use std::fs;
 
 use anyhow::{Context, anyhow, bail, ensure};
+use decomp::decoder::{AddrRange, AddrRangeEnd};
 use dol::Dol;
 
-use crate::args::{AddrRange, AddrRangeEnd, Args};
+use crate::args::Args;
 
 mod args;
-mod ast;
-mod decoder;
 mod disasm;
-mod flow;
 mod trace;
 
 fn main() -> anyhow::Result<()> {

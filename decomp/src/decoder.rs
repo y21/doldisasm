@@ -6,10 +6,18 @@ use ppc32::{
     instruction::{BranchOptions, compute_branch_target},
 };
 
-use crate::args::{AddrRange, AddrRangeEnd};
+#[derive(Debug, Copy, Clone)]
+pub enum AddrRangeEnd {
+    Unbounded,
+    Bounded(u32),
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct Address(pub u32);
+
+#[derive(Debug, Copy, Clone)]
+pub struct AddrRange(pub u32, pub AddrRangeEnd);
+
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:08x}", self.0)

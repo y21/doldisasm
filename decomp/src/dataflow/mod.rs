@@ -5,7 +5,8 @@ use typed_index_collections::{TiSlice, TiVec};
 
 use crate::decoder::Address;
 
-mod register_state;
+pub mod core;
+pub mod register_state;
 pub mod ssa;
 pub mod variables;
 

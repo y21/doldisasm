@@ -1,4 +1,3 @@
-use dataflow::{Dataflow, Results};
 use ppc32::{
     Instruction,
     instruction::{
@@ -14,8 +13,9 @@ use crate::{
         stmt::{Stmt, StmtKind, VarId, VariableVisibility},
         ty::{Ty, TyKind},
     },
-    flow::{
+    dataflow::{
         InstId, InstructionsDeref,
+        core::{Dataflow, Results},
         ssa::{BlockState, DefUseMap, LocalGenerationAnalysis},
         ti_iter,
         variables::{Variables, cr_bits_need_variable},

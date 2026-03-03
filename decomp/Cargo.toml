@@ -1,0 +1,10 @@
+[package]
+name = "decomp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ppc32 = { path = "../ppc32" }
+typed-index-collections = "3.4.0"
+arrayvec = "0.7.6"
+bitflags = "2.11.0"
