@@ -1,19 +1,9 @@
 use anyhow::Context;
 use decomp::{
-    ast::{
-        self,
-        build::AstBuildParams,
-        write::{StringWriter, WriteContext},
-    },
-    dataflow::{
-        self, Instructions,
-        ssa::{LocalGenerationAnalysis, def_use_map},
-        variables::infer_variables,
-    },
+    ast::write::StringWriter,
     decoder::{AddrRange, Decoder},
 };
 use dol::Dol;
-use std::iter;
 
 use crate::args::DisassemblyLanguage;
 
@@ -50,38 +40,9 @@ fn disasm_asm(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
 
 /// Disassemble as C code.
 fn disasm_c(decoder: &mut Decoder<'_>) -> anyhow::Result<()> {
-    let fn_address = decoder.address().0;
-    let insts: Instructions = iter::from_fn(|| decoder.next_instruction_with_offset().transpose())
-        .collect::<Result<_, _>>()
-        .map_err(|err| anyhow::anyhow!("decoder error: {err:#x?}"))?;
-
-    let analysis = LocalGenerationAnalysis {
-        insts: &insts,
-        fn_address,
-    };
-    let local_generations = dataflow::core::run(&analysis);
-
-    let def_use_map = def_use_map(&analysis, &local_generations);
-
-    let variables = infer_variables(&insts, &local_generations, &analysis, &def_use_map);
-
-    let ast = ast::build(AstBuildParams {
-        fn_address,
-        instructions: &insts,
-        local_generations: &local_generations,
-        analysis: &analysis,
-        def_use_map: &def_use_map,
-        variables: &variables,
-    });
-
     let mut output = StringWriter::new();
-    ast::write::write_ast(
-        &ast,
-        &WriteContext {
-            variables: &variables,
-        },
-        &mut output,
-    );
+    decomp::decompile_into_ast_writer(decoder, &mut output)
+        .map_err(|err| anyhow::anyhow!("decompilation error: {err:#x?}"))?;
     println!("{}", output.into_string());
 
     Ok(())

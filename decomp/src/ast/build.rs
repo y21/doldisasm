@@ -370,7 +370,11 @@ fn build_path(
 
                 let return_reg = Register::Gpr(Gpr::RETURN);
                 let return_generation = state.registers.gprs[Gpr::RETURN.0 as usize].generation;
-                let cur_has_return_value = !def_use_map.has_uses(return_reg, return_generation);
+                // We assume there is a return value if
+                // 1.) The r3 generation is greater than 0 at this point, meaning that r3 has been assigned a value
+                // 2.) That generation's value is not used anywhere, so the only logical reason for it to be assigned a value is to return it.
+                let cur_has_return_value =
+                    return_generation > 0 && !def_use_map.has_uses(return_reg, return_generation);
                 has_return_value |= cur_has_return_value;
 
                 stmts.push(Stmt {
