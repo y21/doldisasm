@@ -525,6 +525,14 @@ pub trait RegisterVisitor {
     fn write_crf(&mut self, _crf: Crf) {}
     fn read_crb(&mut self, _crf: Crf, _crb: Crb) {}
     fn write_crb(&mut self, _crf: Crf, _crb: Crb) {}
+    /// Called when the instruction's effect "happens".
+    /// This is used to distinguish the "before" and "after" state of an instruction.
+    /// Consider `addi r3, r3, 1`:
+    /// The function call order for visiting registers will be:
+    /// - `read_gpr(r3)`
+    /// - `effect()`
+    /// - `write_gpr(r3)`
+    fn effect(&mut self) {}
 }
 
 impl Instruction {
@@ -545,19 +553,22 @@ impl Instruction {
         match *self {
             Instruction::Branch { target: _, mode: _, link } => {
                 if link {
+                    visitor.effect();
                     visitor.write_gpr(Gpr::RETURN);
                 }
             },
             Instruction::Rlwnm { source, dest, rot_bits, mask_start: _, mask_end: _, rc } => {
                 visitor.read_gpr(source);
-                visitor.write_gpr(dest);
                 visitor.read_gpr(rot_bits);
+                visitor.effect();
+                visitor.write_gpr(dest);
                 if rc {
                     visitor.write_crf(Crf(0));
                 }
             },
             Instruction::Rlwinm { source, dest, rot_bits: _, mask_start: _, mask_end: _, rc } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_gpr(dest);
                 if rc {
                     visitor.write_crf(Crf(0));
@@ -567,79 +578,96 @@ impl Instruction {
                 if let Some(gpr) = add {
                     visitor.read_gpr(gpr);
                 }
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Addi { dest, source, imm: _ } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Ori { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Cmpli { source, imm: _, crf, l: _ } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_crf(crf);
             },
             Instruction::Cmpi { source, imm: _, crf, l: _ } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_crf(crf);
             },
             Instruction::Cmpl { source_a, source_b, crf, l: _ } => {
                 visitor.read_gpr(source_a);
                 visitor.read_gpr(source_b);
+                visitor.effect();
                 visitor.write_crf(crf);
             },
             Instruction::Cmp { source_a, source_b, crf, l: _ } => {
                 visitor.read_gpr(source_a);
                 visitor.read_gpr(source_b);
+                visitor.effect();
                 visitor.write_crf(crf);
             },
             Instruction::Bc { bo: _, bi, target: _, mode: _, link: _ } => {
                 let (crf, crb) = crb_from_index(bi);
                 visitor.read_crb(crf, crb);
+                visitor.effect();
             },
             Instruction::Bclr { bo: _, bi, link: _ } => {
                 let (crf, crb) = crb_from_index(bi);
                 visitor.read_crb(crf, crb);
+                visitor.effect();
             },
             Instruction::Stwu { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(dest);
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Stwux { source, dest, index } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(dest);
                 visitor.read_gpr(index);
+                visitor.effect();
             },
             Instruction::Subf { dest, source_b, source_a, oe: _, rc } => {
                 visitor.read_gpr(source_a);
                 visitor.read_gpr(source_b);
+                visitor.effect();
                 visitor.write_gpr(dest);
                 if rc {
                     visitor.write_crf(Crf(0));
                 }
             },
             Instruction::Mfspr { dest, spr } => {
-                visitor.write_gpr(dest);
                 visitor.read_spr(spr);
+                visitor.effect();
+                visitor.write_gpr(dest);
             },
             Instruction::Mtspr { source, spr } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_spr(spr);
             },
             Instruction::Mfmsr { dest } => {
                 visitor.read_spr(Spr::Msr);
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Mtmsr { source } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_spr(Spr::Msr);
             },
             Instruction::Or { source, dest, or_with, rc } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(or_with);
+                visitor.effect();
                 visitor.write_gpr(dest);
                 if rc {
                     visitor.write_crf(Crf(0));
@@ -648,31 +676,42 @@ impl Instruction {
             Instruction::And { source1, source2, dest } => {
                 visitor.read_gpr(source1);
                 visitor.read_gpr(source2);
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Stw { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(dest);
+                visitor.effect();
             },
             Instruction::Stmw { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(dest);
+                visitor.effect();
             },
             Instruction::Lwz { dest, source, imm: _ } => {
-                visitor.write_gpr(dest);
                 visitor.read_gpr(source);
+                visitor.effect();
+                visitor.write_gpr(dest);
             },
             Instruction::Lwzu { dest, source, imm: _ } => {
-                visitor.write_gpr(dest);
                 visitor.read_gpr(source);
+                visitor.effect();
+                visitor.write_gpr(dest);
             },
-            Instruction::Isync {} => {},
-            Instruction::Hwsync {} => {},
+            Instruction::Isync {} => {
+                visitor.effect();
+            },
+            Instruction::Hwsync {} => {
+                visitor.effect();
+            },
             Instruction::Oris { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Mtfsb1 { crf, rc } => {
+                visitor.effect();
                 visitor.write_crf(crf);
                 if rc {
                     visitor.write_crf(Crf(1));
@@ -680,21 +719,26 @@ impl Instruction {
             },
             Instruction::Lmw { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Mftb { dest, tbr: _ } => {
+                visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Lhz { dest, source, imm: _ } => {
-                visitor.write_gpr(dest);
                 visitor.read_gpr(source);
+                visitor.effect();
+                visitor.write_gpr(dest);
             },
             Instruction::Lbz { dest, source, imm: _ } => {
-                visitor.write_gpr(dest);
                 visitor.read_gpr(source);
+                visitor.effect();
+                visitor.write_gpr(dest);
             },
             Instruction::Neg { dest, source, rc, oe } => {
                 visitor.read_gpr(source);
+                visitor.effect();
                 visitor.write_gpr(dest);
                 if oe {
                     visitor.write_spr(Spr::Xer);
@@ -710,11 +754,13 @@ impl Instruction {
 
                 visitor.read_crb(crf_a, crb_a);
                 visitor.read_crb(crf_b, crb_b);
+                visitor.effect();
                 visitor.write_crb(crf_dest, crb_dest);
             },
             Instruction::Add { dest, source_a, source_b, oe: _, rc } => {
                 visitor.read_gpr(source_a);
                 visitor.read_gpr(source_b);
+                visitor.effect();
                 visitor.write_gpr(dest);
                 if rc {
                     visitor.write_crf(Crf(0));

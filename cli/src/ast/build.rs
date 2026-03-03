@@ -161,7 +161,7 @@ fn build_path(
                     ExprKind::Binary(BinaryExpr {
                         op: BinaryOp::Add,
                         left: Box::new(Expr {
-                            kind: ExprKind::AddrOf(variables.id_by_gpr(source, &state)),
+                            kind: ExprKind::Var(variables.id_by_gpr(source, &state)),
                         }),
                         right: Box::new(Expr {
                             kind: ExprKind::Immediate16(imm.0),

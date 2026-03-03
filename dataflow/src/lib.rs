@@ -55,7 +55,7 @@ pub type Successors<D> = HashMap<<D as Dataflow>::Idx, Vec<SuccessorTarget<D>>>;
 pub trait Dataflow: Sized {
     type Idx: Hash + Eq + Copy;
     type BlockState: Clone + Default + PartialEq;
-    type BlockItem;
+    type BlockItem: Copy;
     type RecordingState: Default;
 
     fn compute_preds_and_succs(&self, preds: &mut Predecessors<Self>, succs: &mut Successors<Self>);
@@ -138,6 +138,34 @@ pub struct Results<D: Dataflow> {
     states: HashMap<D::Idx, D::BlockState>,
 }
 
+pub struct ForEachCtxt<'analysis, 'iter, D: Dataflow> {
+    analysis: &'analysis D,
+    idx: D::Idx,
+    item: D::BlockItem,
+    state: &'iter mut D::BlockState,
+    apply_effect_called: bool,
+}
+
+impl<'analysis, 'iter, D: Dataflow> ForEachCtxt<'analysis, 'iter, D> {
+    pub fn idx(&self) -> D::Idx {
+        self.idx
+    }
+    pub fn item(&self) -> D::BlockItem {
+        self.item
+    }
+    pub fn state(&self) -> &D::BlockState {
+        self.state
+    }
+    pub fn effect(&mut self) {
+        assert!(
+            !self.apply_effect_called,
+            "attempted to apply effect multiple times for the same item"
+        );
+        self.apply_effect_called = true;
+        self.analysis.apply_effect(self.state, self.idx, &self.item);
+    }
+}
+
 impl<D: Dataflow> Results<D>
 where
     D::Idx: std::fmt::Debug,
@@ -148,34 +176,33 @@ where
     }
 
     /// Iterates over the results along with the input items.
-    pub fn for_each_with_input(
+    pub fn for_each_with_input<'analysis>(
         &self,
-        analysis: &D,
-        mut after_effect: impl FnMut(D::Idx, D::BlockItem, &D::BlockState),
+        analysis: &'analysis D,
+        mut callback: impl FnMut(&mut ForEachCtxt<'analysis, '_, D>),
     ) -> D::BlockState {
-        let mut state = D::BlockState::default();
+        let mut state: D::BlockState = D::BlockState::default();
 
         for (idx, item) in analysis.iter() {
             if let Some(new_state) = self.states.get(&idx) {
                 state = new_state.clone();
             }
 
-            analysis.apply_effect(&mut state, idx, &item);
-
-            after_effect(idx, item, &state);
+            let mut cx = ForEachCtxt {
+                analysis,
+                state: &mut state,
+                apply_effect_called: false,
+                idx,
+                item,
+            };
+            callback(&mut cx);
+            assert!(
+                cx.apply_effect_called,
+                "callback did not call effect() for idx {:?}",
+                idx
+            );
         }
 
         state
     }
 }
-
-// fn dump_mapping(insts: &InstructionsDeref, mapping: &HashMap<InstId, Vec<InstId>>, name: &str) {
-//     for (&from, to) in mapping {
-//         for &to in to {
-//             println!(
-//                 "{name}: {:x?} -> {:x?}",
-//                 insts[from as usize], insts[to as usize]
-//             );
-//         }
-//     }
-// }
