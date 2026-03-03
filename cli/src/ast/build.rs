@@ -144,8 +144,30 @@ fn build_path(
                     todo!("{instruction:?}"); // TODO: make sure to have apply_effect here too
                 }
             }
+            Instruction::Addi {
+                dest: Gpr::STACK_POINTER,
+                source: Gpr::STACK_POINTER,
+                imm: _,
+            } => {
+                // Just adjusting the stack pointer.
+                analysis.apply_effect(&mut state, idx, instruction);
+            }
             Instruction::Addi { dest, source, imm } => {
-                let source = variables.id_by_gpr(source, &state);
+                let source = if source == Gpr::ZERO {
+                    ExprKind::Immediate16(imm.0)
+                } else if source == Gpr::STACK_POINTER {
+                    ExprKind::AddrOf(variables.id_by_stack_mem(imm.0))
+                } else {
+                    ExprKind::Binary(BinaryExpr {
+                        op: BinaryOp::Add,
+                        left: Box::new(Expr {
+                            kind: ExprKind::AddrOf(variables.id_by_gpr(source, &state)),
+                        }),
+                        right: Box::new(Expr {
+                            kind: ExprKind::Immediate16(imm.0),
+                        }),
+                    })
+                };
 
                 analysis.apply_effect(&mut state, idx, instruction);
 
@@ -158,17 +180,7 @@ fn build_path(
                             dest: Expr {
                                 kind: ExprKind::Var(dest),
                             },
-                            value: Expr {
-                                kind: ExprKind::Binary(BinaryExpr {
-                                    op: BinaryOp::Add,
-                                    left: Box::new(Expr {
-                                        kind: ExprKind::Var(source),
-                                    }),
-                                    right: Box::new(Expr {
-                                        kind: ExprKind::Immediate16(imm.0),
-                                    }),
-                                }),
-                            },
+                            value: Expr { kind: source },
                         },
                     });
                 }

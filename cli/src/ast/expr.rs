@@ -8,6 +8,7 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
     Var(VarId),
+    AddrOf(VarId),
     Unary(UnaryExpr),
     Binary(BinaryExpr),
     Immediate16(i16),

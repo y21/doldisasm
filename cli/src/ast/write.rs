@@ -109,6 +109,10 @@ fn write_expr(expr: &Expr, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
             }
             writer.write_str(")");
         }
+        ExprKind::AddrOf(var) => {
+            writer.write_str("&");
+            write_var_id(var, cx, writer);
+        }
     }
 }
 

@@ -5,7 +5,7 @@ A very cool (WIP) GCN/Wii DOL disassembler/decompiler.
 ### Features
 - [Print DOL headers and sections](#dol-headers-and-sections)
 - [Disassemble a function's assembly](#disassemble-a-functions-assembly)
-- Todo: decompile a function into C code
+- [Decompile a function into C code](#decompile-a-function-into-c-code)
 
 ### Building
 Make sure you have the latest version of Rust and run `cargo b -r -p cli` at the root of this project. You should end up with a binary at `./target/release/doldisasm`.
@@ -65,3 +65,35 @@ $ powerpc-eabi-objdump input.elf --disassemble | grep 80008090 -A100
 (note that objdump displays simplified mnemonics, so even though one says 'mtlr r0' while the other says 'mtspr lr r0', they are still essentially saying the same thing)
 </details>
 
+
+#### Decompile a function into C code
+> WARNING: this is very much a work in progress. This has been tested on simple functions and works, but will likely not work on more non-trivial functions for now.
+
+You can take the command from the previous section and simply replace `--disasm asm` with `--disasm c` to have it output C instead of assembly.
+```c
+u32 0x80006270(u32 v20) {
+    v22 = v20;
+    v25 = &v24;
+    v28 = v22;
+    v30 = 0x800C0D30(v25);
+    v31 = v30;
+    v32 = v31 < 0;
+    v33 = v31 == 0;
+    v34 = v31;
+    if (!v33) {
+        v35 = v28;
+        v36 = 8;
+        v37 = 0;
+        v38 = 0x80171C58(v35, v37, v36);
+        v40 = v34;
+        return v40;
+    } else {
+        v46 = &v24;
+        v47 = v28;
+        v48 = 8;
+        v49 = 0x8017AB18(v47, v46, v48);
+        v51 = v34;
+        return v51;
+    }
+}
+```

@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct StackRelativeAddress {
     offset: i16,
 }
@@ -116,7 +116,10 @@ impl Variables {
             .list
             .push_and_get_key(Variable::new(VariableFlags::from_vis(vis)));
         let addr = StackRelativeAddress { offset };
-        assert!(self.mem_to_var.insert(addr, key).is_none());
+        assert!(
+            self.mem_to_var.insert(addr, key).is_none(),
+            "duplicate key: {addr:?}"
+        );
         key
     }
 
@@ -125,13 +128,16 @@ impl Variables {
         self.mk_root_stack_mem_var(offset, self.list[origin].vis())
     }
 
+    pub fn optional_id_by_stack_mem(&self, offset: i16) -> Option<VarId> {
+        let addr = StackRelativeAddress { offset };
+        self.mem_to_var.get(&addr).copied()
+    }
+
     #[track_caller]
     pub fn id_by_stack_mem(&self, offset: i16) -> VarId {
-        let addr = StackRelativeAddress { offset };
-
-        match self.mem_to_var.get(&addr) {
-            Some(var_id) => *var_id,
-            None => panic!("no variable for stack-relative addr {addr:?}"),
+        match self.optional_id_by_stack_mem(offset) {
+            Some(var_id) => var_id,
+            None => panic!("no variable for stack-relative addr {offset:?}"),
         }
     }
 }
@@ -213,15 +219,24 @@ fn visit_path(
                     todo!()
                 }
             }
-            Instruction::Addi {
-                dest,
-                source,
-                imm: _,
-            } => {
-                // TODO: special case source == 1 here and create a variable for it
-                let source = variables.id_by_gpr(source, &state);
-                analysis.apply_effect(&mut state, idx, inst);
-                variables.mk_gpr_var(dest, &state, source);
+            Instruction::Addi { dest, source, imm } => {
+                if source == Gpr::ZERO {
+                    // addi with r0 is just a load immediate
+                    analysis.apply_effect(&mut state, idx, inst);
+                    variables.mk_root_gpr_var(dest, &state, VariableVisibility::Visible);
+                } else {
+                    let source = if source == Gpr::STACK_POINTER {
+                        if let Some(var) = variables.optional_id_by_stack_mem(imm.0) {
+                            var
+                        } else {
+                            variables.mk_root_stack_mem_var(imm.0, VariableVisibility::Visible)
+                        }
+                    } else {
+                        variables.id_by_gpr(source, &state)
+                    };
+                    analysis.apply_effect(&mut state, idx, inst);
+                    variables.mk_gpr_var(dest, &state, source);
+                }
             }
             Instruction::Stw { source, dest, imm } => {
                 let source = variables.id_by_gpr(source, &state);
