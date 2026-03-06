@@ -1,4 +1,4 @@
-use std::iter;
+use std::{collections::BTreeMap, iter};
 
 use ppc32::decoder::DecodeError;
 
@@ -6,7 +6,8 @@ use crate::{
     ast::{build::AstBuildParams, write::WriteContext},
     dataflow::{
         Instructions,
-        ssa::{LocalGenerationAnalysis, def_use_map},
+        core::DataflowArgs,
+        ssa::{LocalGenerationAnalysis, compute_preds_and_succs, def_use_map},
         variables::infer_variables,
     },
     decoder::Decoder,
@@ -24,11 +25,22 @@ pub fn decompile_into_ast_writer(
     let insts: Instructions = iter::from_fn(|| decoder.next_instruction_with_offset().transpose())
         .collect::<Result<_, _>>()?;
 
+    let mut preds = BTreeMap::default();
+    let mut succs = BTreeMap::default();
+
+    compute_preds_and_succs(&insts, fn_address, &mut preds, &mut succs);
+
     let analysis = LocalGenerationAnalysis {
         insts: &insts,
         fn_address,
     };
-    let local_generations = dataflow::core::run(&analysis);
+    let local_generations = dataflow::core::run(
+        &analysis,
+        DataflowArgs {
+            preds: &preds,
+            succs: &succs,
+        },
+    );
 
     let def_use_map = def_use_map(&analysis, &local_generations);
 
@@ -41,6 +53,7 @@ pub fn decompile_into_ast_writer(
         analysis: &analysis,
         def_use_map: &def_use_map,
         variables: &variables,
+        succs: &succs,
     });
 
     ast::write::write_ast(

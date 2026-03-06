@@ -10,7 +10,7 @@ pub mod register_state;
 pub mod ssa;
 pub mod variables;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InstId(pub u32);
 impl Into<usize> for InstId {
     fn into(self) -> usize {

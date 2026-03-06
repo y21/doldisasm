@@ -15,6 +15,73 @@ use crate::dataflow::{
     ti_iter,
 };
 
+pub fn compute_preds_and_succs(
+    insts: &InstructionsDeref,
+    fn_address: u32,
+    preds: &mut Predecessors<LocalGenerationAnalysis<'_>>,
+    succs: &mut Successors<LocalGenerationAnalysis<'_>>,
+) {
+    let mut store_mapping = |from: InstId, to: SuccessorTarget<_>| {
+        if let Some(to) = to.idx() {
+            preds.entry(to).or_default().push(from);
+        }
+        succs.entry(from).or_default().push(to);
+    };
+
+    for (idx, &(off, inst)) in ti_iter(insts) {
+        let next_instruction_idx = InstId(idx.0 + 1);
+        if let Instruction::Bc {
+            bo: _,
+            bi: _,
+            target,
+            mode,
+            link: false,
+        } = inst
+        {
+            if let Some(target) = compute_branch_target(off.0, mode, target).checked_sub(fn_address)
+            {
+                // If we have a conditional branch to an address before the function itself (i.e. checked_sub = None due to overflow),
+                // then that isn't part of this function and thus not something we need to analyze, hence the checked_sub.
+                // The difference is also in bytes, so the instruction difference is that divided by 4.
+                store_mapping(idx, SuccessorTarget::Id(InstId(target / 4)));
+            }
+
+            store_mapping(idx, SuccessorTarget::Id(next_instruction_idx));
+        } else if let Instruction::Bclr { bo, bi: _, link } = inst {
+            assert!(!link, "linking bclr not supported yet");
+
+            store_mapping(idx, SuccessorTarget::Return);
+            match bo {
+                BranchOptions::BranchIfFalse | BranchOptions::BranchIfTrue => {
+                    store_mapping(idx, SuccessorTarget::Id(next_instruction_idx))
+                }
+                BranchOptions::BranchAlways => {}
+                BranchOptions::DecCTRBranchIfFalse => todo!(),
+                BranchOptions::DecCTRBranchIfTrue => todo!(),
+                BranchOptions::DecCTRBranchIfNotZero => todo!(),
+                BranchOptions::DecCTRBranchIfZero => todo!(),
+            }
+        } else if let Instruction::Branch {
+            target,
+            mode,
+            link: false,
+        } = inst
+            && let Some(target) = compute_branch_target(off.0, mode, target).checked_sub(fn_address)
+        {
+            store_mapping(idx, SuccessorTarget::Id(InstId(target / 4)));
+        } else {
+            store_mapping(idx, SuccessorTarget::Id(next_instruction_idx));
+        }
+    }
+
+    succs.retain(|_, edges| match **edges {
+        [SuccessorTarget::Id(target)] => preds[&target].len() > 1,
+        // Make sure we always stop at `blr`
+        [SuccessorTarget::Return] => true,
+        [..] => true,
+    });
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RegisterWithGeneration {
     pub reg: Register,
@@ -111,74 +178,6 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         )
         .for_each(|(record_gen, block_gen)| {
             *record_gen = block_gen.highest_generation;
-        });
-    }
-
-    fn compute_preds_and_succs(
-        &self,
-        preds: &mut Predecessors<Self>,
-        succs: &mut Successors<Self>,
-    ) {
-        let mut store_mapping = |from: InstId, to: SuccessorTarget<_>| {
-            if let Some(to) = to.idx() {
-                preds.entry(to).or_default().push(from);
-            }
-            succs.entry(from).or_default().push(to);
-        };
-
-        for (idx, &(off, inst)) in ti_iter(&self.insts) {
-            let next_instruction_idx = InstId(idx.0 + 1);
-            if let Instruction::Bc {
-                bo: _,
-                bi: _,
-                target,
-                mode,
-                link: false,
-            } = inst
-            {
-                if let Some(target) =
-                    compute_branch_target(off.0, mode, target).checked_sub(self.fn_address)
-                {
-                    // If we have a conditional branch to an address before the function itself (i.e. checked_sub = None due to overflow),
-                    // then that isn't part of this function and thus not something we need to analyze, hence the checked_sub.
-                    // The difference is also in bytes, so the instruction difference is that divided by 4.
-                    store_mapping(idx, SuccessorTarget::Id(InstId(target / 4)));
-                }
-
-                store_mapping(idx, SuccessorTarget::Id(next_instruction_idx));
-            } else if let Instruction::Bclr { bo, bi: _, link } = inst {
-                assert!(!link, "linking bclr not supported yet");
-
-                store_mapping(idx, SuccessorTarget::Return);
-                match bo {
-                    BranchOptions::BranchIfFalse | BranchOptions::BranchIfTrue => {
-                        store_mapping(idx, SuccessorTarget::Id(next_instruction_idx))
-                    }
-                    BranchOptions::BranchAlways => {}
-                    BranchOptions::DecCTRBranchIfFalse => todo!(),
-                    BranchOptions::DecCTRBranchIfTrue => todo!(),
-                    BranchOptions::DecCTRBranchIfNotZero => todo!(),
-                    BranchOptions::DecCTRBranchIfZero => todo!(),
-                }
-            } else if let Instruction::Branch {
-                target,
-                mode,
-                link: false,
-            } = inst
-                && let Some(target) =
-                    compute_branch_target(off.0, mode, target).checked_sub(self.fn_address)
-            {
-                store_mapping(idx, SuccessorTarget::Id(InstId(target / 4)));
-            } else {
-                store_mapping(idx, SuccessorTarget::Id(next_instruction_idx));
-            }
-        }
-
-        succs.retain(|_, edges| match **edges {
-            [SuccessorTarget::Id(target)] => preds[&target].len() > 1,
-            // Make sure we always stop at `blr`
-            [SuccessorTarget::Return] => true,
-            [..] => true,
         });
     }
 

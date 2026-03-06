@@ -1,3 +1,5 @@
+use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
+
 use ppc32::{
     Instruction,
     instruction::{
@@ -15,7 +17,7 @@ use crate::{
     },
     dataflow::{
         InstId, InstructionsDeref,
-        core::{Dataflow, Results},
+        core::{Dataflow, Results, Successors, for_each_transitive_successor},
         ssa::{BlockState, DefUseMap, LocalGenerationAnalysis},
         ti_iter,
         variables::{Variables, cr_bits_need_variable},
@@ -26,9 +28,10 @@ pub struct AstBuildParams<'a, 'b> {
     pub fn_address: u32,
     pub instructions: &'a InstructionsDeref,
     pub local_generations: &'a Results<LocalGenerationAnalysis<'b>>,
-    pub analysis: &'a LocalGenerationAnalysis<'a>,
+    pub analysis: &'a LocalGenerationAnalysis<'b>,
     pub def_use_map: &'a DefUseMap,
     pub variables: &'a Variables,
+    pub succs: &'a Successors<LocalGenerationAnalysis<'b>>,
 }
 
 struct BuildPathResult {
@@ -39,11 +42,22 @@ struct BuildPathResult {
 fn build_path(
     instructions: &InstructionsDeref,
     start_index: InstId,
+    end_index: Option<InstId>,
     local_generations: &Results<LocalGenerationAnalysis<'_>>,
     analysis: &LocalGenerationAnalysis<'_>,
     variables: &Variables,
     def_use_map: &DefUseMap,
+    succs: &Successors<LocalGenerationAnalysis<'_>>,
 ) -> BuildPathResult {
+    if let Some(end_index) = end_index
+        && start_index == end_index
+    {
+        return BuildPathResult {
+            stmts: Vec::new(),
+            has_return_value: false,
+        };
+    }
+
     let mut state = local_generations.get(start_index).map_or_else(
         || {
             assert_eq!(start_index, InstId(0));
@@ -55,16 +69,20 @@ fn build_path(
     let mut stmts = Vec::new();
     let mut has_return_value = false;
 
-    for (idx, (inst_addr, instruction)) in ti_iter(&instructions[start_index..]) {
+    let block_instructions = &instructions[start_index..];
+
+    for (idx, (inst_addr, instruction)) in ti_iter(block_instructions) {
         let absolute_index = InstId(start_index.0 + idx.0);
         if absolute_index != start_index && local_generations.get(absolute_index).is_some() {
             let next_result = build_path(
                 instructions,
                 absolute_index,
+                end_index,
                 local_generations,
                 analysis,
                 variables,
                 def_use_map,
+                succs,
             );
 
             stmts.extend(next_result.stmts);
@@ -310,13 +328,16 @@ fn build_path(
                     let path_result = build_path(
                         instructions,
                         idx,
+                        end_index,
                         local_generations,
                         analysis,
                         variables,
                         def_use_map,
+                        succs,
                     );
                     stmts.extend(path_result.stmts);
                     has_return_value |= path_result.has_return_value;
+                    break;
                 }
             }
             Instruction::Bc {
@@ -332,8 +353,23 @@ fn build_path(
                     (compute_branch_target(inst_addr.0, mode, target) - analysis.fn_address) / 4,
                 );
                 let false_idx = InstId(absolute_index.0 + 1);
-                // TODO!! find the next common instruction between the two paths and only build statements until there,
-                // then build the path from *that* common instruction.
+
+                let mut true_transitive_successors = HashSet::new();
+                for_each_transitive_successor(succs, true_idx, &mut |inst| {
+                    true_transitive_successors.insert(inst);
+                    ControlFlow::<Infallible>::Continue(())
+                });
+
+                // The "common merge instruction" (i.e. the instruction that they both "meet" at) is where the paths will stop.
+                let common_merge_inst =
+                    for_each_transitive_successor(succs, false_idx, &mut |inst| {
+                        if true_transitive_successors.contains(&inst) {
+                            ControlFlow::Break(inst)
+                        } else {
+                            ControlFlow::Continue(())
+                        }
+                    })
+                    .break_value();
 
                 let (crf, crb) = crb_from_index(bi);
                 let generation = state.registers.sprs.cr(crf, crb).generation;
@@ -347,10 +383,12 @@ fn build_path(
                 } = build_path(
                     instructions,
                     true_idx,
+                    common_merge_inst,
                     local_generations,
                     analysis,
                     variables,
                     def_use_map,
+                    succs,
                 );
                 let BuildPathResult {
                     stmts: else_stmts,
@@ -358,10 +396,12 @@ fn build_path(
                 } = build_path(
                     instructions,
                     false_idx,
+                    common_merge_inst,
                     local_generations,
                     analysis,
                     variables,
                     def_use_map,
+                    succs,
                 );
 
                 has_return_value |= then_has_return_value | else_has_return_value;
@@ -393,6 +433,21 @@ fn build_path(
                         else_stmts: else_stmts,
                     },
                 });
+
+                if let Some(common_merge_inst) = common_merge_inst {
+                    let next_path = build_path(
+                        instructions,
+                        common_merge_inst,
+                        end_index,
+                        local_generations,
+                        analysis,
+                        variables,
+                        def_use_map,
+                        succs,
+                    );
+                    stmts.extend(next_path.stmts);
+                    has_return_value |= next_path.has_return_value;
+                }
                 break;
             }
             Instruction::Lwz { dest, source, imm } => {
@@ -485,10 +540,12 @@ fn build_path(
                     let next_path = build_path(
                         instructions,
                         InstId(absolute_index.0 + 1),
+                        end_index,
                         local_generations,
                         analysis,
                         variables,
                         def_use_map,
+                        succs,
                     );
                     stmts.extend(next_path.stmts);
                     has_return_value |= next_path.has_return_value;
@@ -513,6 +570,7 @@ pub fn build(
         def_use_map,
         fn_address,
         variables,
+        succs,
     }: AstBuildParams,
 ) -> Ast {
     // Infer parameters
@@ -544,10 +602,12 @@ pub fn build(
     } = build_path(
         instructions,
         InstId(0),
+        None,
         local_generations,
         analysis,
         variables,
         def_use_map,
+        succs,
     );
 
     let function = Function {

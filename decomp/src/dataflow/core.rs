@@ -1,4 +1,25 @@
-use std::{array, collections::HashMap, fmt::Debug, hash::Hash};
+use std::{
+    array,
+    collections::{BTreeMap, HashMap},
+    fmt::Debug,
+    hash::Hash,
+    ops::ControlFlow,
+};
+
+pub fn for_each_transitive_successor<B, D: Dataflow>(
+    succs: &Successors<D>,
+    inst: D::Idx,
+    fun: &mut impl FnMut(D::Idx) -> ControlFlow<B>,
+) -> ControlFlow<B> {
+    fun(inst)?;
+    let (_, edges) = succs.range(inst..).next().unwrap();
+    for edge in edges {
+        if let SuccessorTarget::Id(next) = *edge {
+            for_each_transitive_successor(succs, next, fun)?;
+        }
+    }
+    ControlFlow::Continue(())
+}
 
 #[derive(PartialEq, Eq)]
 pub enum SuccessorTarget<D: Dataflow> {
@@ -49,8 +70,8 @@ impl<D: Dataflow> SuccessorTarget<D> {
     }
 }
 
-pub type Predecessors<D> = HashMap<<D as Dataflow>::Idx, Vec<<D as Dataflow>::Idx>>;
-pub type Successors<D> = HashMap<<D as Dataflow>::Idx, Vec<SuccessorTarget<D>>>;
+pub type Predecessors<D> = BTreeMap<<D as Dataflow>::Idx, Vec<<D as Dataflow>::Idx>>;
+pub type Successors<D> = BTreeMap<<D as Dataflow>::Idx, Vec<SuccessorTarget<D>>>;
 
 pub trait Join<A>: Sized {
     fn join(&self, other: &Self, arg: &mut A) -> Self;
@@ -63,12 +84,11 @@ impl<const N: usize, S: Join<T>, T> Join<[T; N]> for [S; N] {
 }
 
 pub trait Dataflow: Sized {
-    type Idx: Hash + Eq + Copy;
+    type Idx: Hash + Eq + Copy + Ord;
     type BlockState: Clone + Default + PartialEq + Join<Self::RecordingState>;
     type BlockItem: Copy;
     type RecordingState: Default;
 
-    fn compute_preds_and_succs(&self, preds: &mut Predecessors<Self>, succs: &mut Successors<Self>);
     fn initial_idx() -> Self::Idx;
     fn iter_block(&self, block: Self::Idx) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
     fn iter(&self) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
@@ -85,17 +105,18 @@ pub trait Dataflow: Sized {
     );
 }
 
-pub fn run<D: Dataflow>(dataflow: &D) -> Results<D>
+pub struct DataflowArgs<'a, D: Dataflow> {
+    pub preds: &'a Predecessors<D>,
+    pub succs: &'a Successors<D>,
+}
+
+pub fn run<D: Dataflow>(dataflow: &D, args: DataflowArgs<'_, D>) -> Results<D>
 where
     D::Idx: std::fmt::Debug,
 {
     let mut queue = vec![D::initial_idx()];
 
-    let mut preds = HashMap::default();
-    let mut succs = HashMap::default();
     let mut entry_states: HashMap<D::Idx, D::BlockState> = HashMap::default();
-
-    dataflow.compute_preds_and_succs(&mut preds, &mut succs);
 
     let mut record_state = D::RecordingState::default();
 
@@ -111,7 +132,7 @@ where
         for (idx, item) in dataflow.iter_block(idx) {
             dataflow.apply_effect(&mut state, idx, &item);
 
-            if let Some(succs) = succs.get(&idx) {
+            if let Some(succs) = args.succs.get(&idx) {
                 dataflow.post_block_record(&mut record_state, &mut state);
                 // Note: `succs` may be empty for `blr` (exit blocks).
 
