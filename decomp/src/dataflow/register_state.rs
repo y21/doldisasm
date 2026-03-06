@@ -1,7 +1,33 @@
+use crate::dataflow::core::Join;
+
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct RegisterState<S> {
     pub gprs: [S; 32],
     pub sprs: SprState<S>,
+}
+
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+pub struct SprState<S> {
+    pub lr: S,
+    pub ctr: S,
+    pub xer: XerState<S>,
+    pub msr: S,
+    pub cr: [CrFieldState<S>; 8],
+}
+
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+pub struct CrFieldState<S> {
+    pub lt: S,
+    pub gt: S,
+    pub eq: S,
+    pub so: S,
+}
+
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+pub struct XerState<S> {
+    pub so: S,
+    pub ov: S,
+    pub ca: S,
 }
 
 impl<S> RegisterState<S> {
@@ -22,15 +48,6 @@ impl<S> RegisterState<S> {
                     .flat_map(|CrFieldState { lt, gt, eq, so }| [lt, gt, eq, so]),
             )
     }
-}
-
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SprState<S> {
-    pub lr: S,
-    pub ctr: S,
-    pub xer: XerState<S>,
-    pub msr: S,
-    pub cr: [CrFieldState<S>; 8],
 }
 
 impl<S> SprState<S> {
@@ -55,17 +72,44 @@ impl<S> SprState<S> {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub struct CrFieldState<S> {
-    pub lt: S,
-    pub gt: S,
-    pub eq: S,
-    pub so: S,
+impl<S: Join<T>, T> Join<RegisterState<T>> for RegisterState<S> {
+    fn join(&self, other: &Self, arg: &mut RegisterState<T>) -> Self {
+        Self {
+            gprs: Join::join(&self.gprs, &other.gprs, &mut arg.gprs),
+            sprs: Join::join(&self.sprs, &other.sprs, &mut arg.sprs),
+        }
+    }
 }
 
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub struct XerState<S> {
-    pub so: S,
-    pub ov: S,
-    pub ca: S,
+impl<S: Join<T>, T> Join<SprState<T>> for SprState<S> {
+    fn join(&self, other: &Self, arg: &mut SprState<T>) -> Self {
+        Self {
+            lr: Join::join(&self.lr, &other.lr, &mut arg.lr),
+            ctr: Join::join(&self.ctr, &other.ctr, &mut arg.lr),
+            xer: Join::join(&self.xer, &other.xer, &mut arg.xer),
+            msr: Join::join(&self.msr, &other.msr, &mut arg.msr),
+            cr: Join::join(&self.cr, &other.cr, &mut arg.cr),
+        }
+    }
+}
+
+impl<S: Join<T>, T> Join<XerState<T>> for XerState<S> {
+    fn join(&self, other: &Self, arg: &mut XerState<T>) -> Self {
+        Self {
+            so: Join::join(&self.so, &other.so, &mut arg.so),
+            ov: Join::join(&self.ov, &other.ov, &mut arg.ov),
+            ca: Join::join(&self.ca, &other.ca, &mut arg.ca),
+        }
+    }
+}
+
+impl<S: Join<T>, T> Join<CrFieldState<T>> for CrFieldState<S> {
+    fn join(&self, other: &Self, arg: &mut CrFieldState<T>) -> Self {
+        Self {
+            lt: Join::join(&self.lt, &other.lt, &mut arg.lt),
+            gt: Join::join(&self.gt, &other.gt, &mut arg.gt),
+            eq: Join::join(&self.eq, &other.eq, &mut arg.eq),
+            so: Join::join(&self.so, &other.so, &mut arg.so),
+        }
+    }
 }

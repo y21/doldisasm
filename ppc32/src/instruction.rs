@@ -270,8 +270,7 @@ define_instructions! {
         {
             source: Gpr = |word| Gpr(word.u8::<11, 15>()),
             imm: Immediate<u16> = |word| Immediate(word.u16::<16, 31>()),
-            crf: Crf = |word| Crf(word.u8::<6, 8>()),
-            l: bool = |word| word.bit::<10>() != 0
+            crf: Crf = |word| Crf(word.u8::<6, 8>())
         }
     },
     Cmpl {
@@ -552,8 +551,8 @@ impl Instruction {
     pub fn visit_registers(&self, mut visitor: impl RegisterVisitor) {
         match *self {
             Instruction::Branch { target: _, mode: _, link } => {
+                visitor.effect();
                 if link {
-                    visitor.effect();
                     visitor.write_gpr(Gpr::RETURN);
                 }
             },
@@ -596,7 +595,7 @@ impl Instruction {
                 visitor.effect();
                 visitor.write_crf(crf);
             },
-            Instruction::Cmpi { source, imm: _, crf, l: _ } => {
+            Instruction::Cmpi { source, imm: _, crf,  } => {
                 visitor.read_gpr(source);
                 visitor.effect();
                 visitor.write_crf(crf);

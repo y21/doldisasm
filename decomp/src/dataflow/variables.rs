@@ -175,8 +175,19 @@ fn visit_path(
         },
         Clone::clone,
     );
-
     for (idx, (inst_addr, inst)) in ti_iter(&instructions[start_index..]) {
+        let absolute_index = InstId(start_index.0 + idx.0);
+        if absolute_index != start_index && local_generations.get(absolute_index).is_some() {
+            return visit_path(
+                instructions,
+                absolute_index,
+                variables,
+                local_generations,
+                analysis,
+                def_use_map,
+            );
+        }
+
         match *inst {
             Instruction::Stwu {
                 source,
@@ -186,6 +197,21 @@ fn visit_path(
                 let source = variables.id_by_gpr(source, &state);
                 analysis.apply_effect(&mut state, idx, inst);
                 variables.mk_gpr_var(dest, &state, source);
+            }
+            Instruction::Cmpi {
+                source,
+                imm: _,
+                crf,
+            } => {
+                let source = variables.id_by_gpr(source, &state);
+                analysis.apply_effect(&mut state, idx, inst);
+                for crb in cr_bits_need_variable(&state, def_use_map, crf) {
+                    variables.mk_reg_var(
+                        Register::Cr(crf, crb),
+                        state.registers.sprs.cr(crf, crb).generation,
+                        source,
+                    );
+                }
             }
             Instruction::Or {
                 source,

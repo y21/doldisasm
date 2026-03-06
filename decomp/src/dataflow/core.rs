@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{array, collections::HashMap, fmt::Debug, hash::Hash};
 
 #[derive(PartialEq, Eq)]
 pub enum SuccessorTarget<D: Dataflow> {
@@ -52,15 +52,24 @@ impl<D: Dataflow> SuccessorTarget<D> {
 pub type Predecessors<D> = HashMap<<D as Dataflow>::Idx, Vec<<D as Dataflow>::Idx>>;
 pub type Successors<D> = HashMap<<D as Dataflow>::Idx, Vec<SuccessorTarget<D>>>;
 
+pub trait Join<A>: Sized {
+    fn join(&self, other: &Self, arg: &mut A) -> Self;
+}
+
+impl<const N: usize, S: Join<T>, T> Join<[T; N]> for [S; N] {
+    fn join(&self, other: &Self, arg: &mut [T; N]) -> Self {
+        array::from_fn(|i| Join::join(&self[i], &other[i], &mut arg[i]))
+    }
+}
+
 pub trait Dataflow: Sized {
     type Idx: Hash + Eq + Copy;
-    type BlockState: Clone + Default + PartialEq;
+    type BlockState: Clone + Default + PartialEq + Join<Self::RecordingState>;
     type BlockItem: Copy;
     type RecordingState: Default;
 
     fn compute_preds_and_succs(&self, preds: &mut Predecessors<Self>, succs: &mut Successors<Self>);
     fn initial_idx() -> Self::Idx;
-    fn join_states(a: &Self::BlockState, b: &Self::BlockState) -> Self::BlockState;
     fn iter_block(&self, block: Self::Idx) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
     fn iter(&self) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
     fn apply_effect(&self, state: &mut Self::BlockState, idx: Self::Idx, data: &Self::BlockItem);
@@ -109,7 +118,7 @@ where
                 for &succ in succs {
                     if let SuccessorTarget::Id(succ) = succ {
                         if let Some(succ_state) = entry_states.get(&succ) {
-                            let succ_state_joined = D::join_states(&state, succ_state);
+                            let succ_state_joined = state.join(succ_state, &mut record_state);
                             let state_changed = &succ_state_joined != succ_state;
 
                             if state_changed {

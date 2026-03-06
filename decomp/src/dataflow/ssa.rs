@@ -10,7 +10,7 @@ use ppc32::{
 
 use crate::dataflow::{
     InstId, InstructionsDeref,
-    core::{Dataflow, ForEachCtxt, Predecessors, Results, SuccessorTarget, Successors},
+    core::{Dataflow, ForEachCtxt, Join, Predecessors, Results, SuccessorTarget, Successors},
     register_state::{CrFieldState, RegisterState},
     ti_iter,
 };
@@ -27,6 +27,18 @@ pub struct LocalRegisterState {
     pub highest_generation: u32,
 }
 
+// FIXME: this join impl never reaches a fixpoint, so this is going to run into infinite loops with loops
+impl Join<u32> for LocalRegisterState {
+    fn join(&self, _other: &Self, recording_state: &mut u32) -> Self {
+        let generation = *recording_state;
+        *recording_state += 1;
+        Self {
+            generation,
+            highest_generation: *recording_state,
+        }
+    }
+}
+
 impl LocalRegisterState {
     pub fn next_generation(&mut self) {
         self.highest_generation += 1;
@@ -37,6 +49,25 @@ impl LocalRegisterState {
 #[derive(Default, PartialEq, Eq, Clone, Debug)]
 pub struct BlockState {
     pub registers: RegisterState<LocalRegisterState>,
+}
+
+impl Join<RecordingState> for BlockState {
+    fn join(&self, other: &Self, arg: &mut RecordingState) -> Self {
+        Self {
+            registers: RegisterState {
+                gprs: Join::join(
+                    &self.registers.gprs,
+                    &other.registers.gprs,
+                    &mut arg.register_generations.gprs,
+                ),
+                sprs: Join::join(
+                    &self.registers.sprs,
+                    &other.registers.sprs,
+                    &mut arg.register_generations.sprs,
+                ),
+            },
+        }
+    }
 }
 
 pub struct LocalGenerationAnalysis<'a> {
@@ -117,16 +148,30 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
             } else if let Instruction::Bclr { bo: _, bi: _, link } = inst {
                 assert!(!link, "linking bclr not supported yet");
                 store_mapping(idx, SuccessorTarget::Return);
+            } else if let Instruction::Branch {
+                target,
+                mode,
+                link: false,
+            } = inst
+                && let Some(target) =
+                    compute_branch_target(off.0, mode, target).checked_sub(self.fn_address)
+            {
+                store_mapping(idx, SuccessorTarget::Id(InstId(target / 4)));
+            } else {
+                store_mapping(idx, SuccessorTarget::Id(InstId(idx.0 + 1)));
             }
         }
+
+        succs.retain(|_, edges| match **edges {
+            [SuccessorTarget::Id(target)] => preds[&target].len() > 1,
+            // Make sure we always stop at `blr`
+            [SuccessorTarget::Return] => true,
+            [..] => true,
+        });
     }
 
     fn initial_idx() -> Self::Idx {
         InstId(0)
-    }
-
-    fn join_states(_: &Self::BlockState, _: &Self::BlockState) -> Self::BlockState {
-        todo!()
     }
 
     fn iter(&self) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)> {

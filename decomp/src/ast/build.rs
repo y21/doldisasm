@@ -38,15 +38,15 @@ struct BuildPathResult {
 
 fn build_path(
     instructions: &InstructionsDeref,
-    idx: InstId,
+    start_index: InstId,
     local_generations: &Results<LocalGenerationAnalysis<'_>>,
     analysis: &LocalGenerationAnalysis<'_>,
     variables: &Variables,
     def_use_map: &DefUseMap,
 ) -> BuildPathResult {
-    let mut state = local_generations.get(idx).map_or_else(
+    let mut state = local_generations.get(start_index).map_or_else(
         || {
-            assert_eq!(idx, InstId(0));
+            assert_eq!(start_index, InstId(0));
             BlockState::default()
         },
         Clone::clone,
@@ -55,7 +55,26 @@ fn build_path(
     let mut stmts = Vec::new();
     let mut has_return_value = false;
 
-    for (idx, (inst_addr, instruction)) in ti_iter(&instructions[idx..]) {
+    for (idx, (inst_addr, instruction)) in ti_iter(&instructions[start_index..]) {
+        let absolute_index = InstId(start_index.0 + idx.0);
+        if absolute_index != start_index && local_generations.get(absolute_index).is_some() {
+            let next_result = build_path(
+                instructions,
+                absolute_index,
+                local_generations,
+                analysis,
+                variables,
+                def_use_map,
+            );
+
+            stmts.extend(next_result.stmts);
+            has_return_value |= next_result.has_return_value;
+
+            return BuildPathResult {
+                stmts,
+                has_return_value,
+            };
+        }
         match *instruction {
             Instruction::Stwu {
                 source,
@@ -65,6 +84,43 @@ fn build_path(
                 assert!(source == Gpr::STACK_POINTER && dest == Gpr::STACK_POINTER);
 
                 analysis.apply_effect(&mut state, idx, instruction);
+            }
+            Instruction::Cmpi { source, imm, crf } => {
+                let source = variables.id_by_gpr(source, &state);
+
+                analysis.apply_effect(&mut state, idx, instruction);
+
+                for crb in cr_bits_need_variable(&state, def_use_map, crf) {
+                    let var = variables.id_by_reg(
+                        Register::Cr(crf, crb),
+                        state.registers.sprs.cr(crf, crb).generation,
+                    );
+
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            dest: Expr {
+                                kind: ExprKind::Var(var),
+                            },
+                            value: Expr {
+                                kind: ExprKind::Binary(BinaryExpr {
+                                    op: match crb {
+                                        Crb::Negative => BinaryOp::Lt,
+                                        Crb::Positive => BinaryOp::Gt,
+                                        Crb::Zero => BinaryOp::Eq,
+                                        Crb::Overflow => todo!(),
+                                    },
+                                    left: Box::new(Expr {
+                                        kind: ExprKind::Var(source),
+                                    }),
+                                    right: Box::new(Expr {
+                                        // TODO: cast to signed (i16)
+                                        kind: ExprKind::Immediate16(imm.0 as i16),
+                                    }),
+                                }),
+                            },
+                        },
+                    });
+                }
             }
             Instruction::Or {
                 source,
@@ -101,9 +157,10 @@ fn build_path(
 
                         let crf = Crf(0);
                         for crb in cr_bits_need_variable(&state, def_use_map, crf) {
-                            let generation = state.registers.sprs.cr(crf, crb).generation;
-
-                            let var = variables.id_by_reg(Register::Cr(crf, crb), generation);
+                            let var = variables.id_by_reg(
+                                Register::Cr(crf, crb),
+                                state.registers.sprs.cr(crf, crb).generation,
+                            );
 
                             stmts.push(Stmt {
                                 kind: StmtKind::Assign {
@@ -247,7 +304,19 @@ fn build_path(
                         },
                     });
                 } else {
-                    todo!()
+                    analysis.apply_effect(&mut state, idx, instruction);
+
+                    let idx = InstId((target - analysis.fn_address) / 4);
+                    let path_result = build_path(
+                        instructions,
+                        idx,
+                        local_generations,
+                        analysis,
+                        variables,
+                        def_use_map,
+                    );
+                    stmts.extend(path_result.stmts);
+                    has_return_value |= path_result.has_return_value;
                 }
             }
             Instruction::Bc {

@@ -20,7 +20,9 @@ impl Word {
     }
 
     pub fn i32<const FROM: u32, const TO: u32>(self) -> i32 {
-        self.u32::<FROM, TO>() as i32
+        let value = self.u32::<FROM, TO>();
+        // Sign extension: make sure the 24th bit becomes the sign bit
+        (value << (32 - (TO - FROM))) as i32 >> (32 - (TO - FROM))
     }
 
     pub fn u16<const FROM: u32, const TO: u32>(self) -> u16 {
