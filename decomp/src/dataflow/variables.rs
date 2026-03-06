@@ -393,6 +393,7 @@ pub fn infer_variables(
         }
     }
 
+    // TODO: make a helper for visiting the graph?
     visit_path(
         instructions,
         InstId(0),

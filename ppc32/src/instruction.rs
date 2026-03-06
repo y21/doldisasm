@@ -612,14 +612,18 @@ impl Instruction {
                 visitor.effect();
                 visitor.write_crf(crf);
             },
-            Instruction::Bc { bo: _, bi, target: _, mode: _, link: _ } => {
-                let (crf, crb) = crb_from_index(bi);
-                visitor.read_crb(crf, crb);
+            Instruction::Bc { bo, bi, target: _, mode: _, link: _ } => {
+                if !matches!(bo, BranchOptions::BranchAlways) {
+                    let (crf, crb) = crb_from_index(bi);
+                    visitor.read_crb(crf, crb);
+                }
                 visitor.effect();
             },
-            Instruction::Bclr { bo: _, bi, link: _ } => {
-                let (crf, crb) = crb_from_index(bi);
-                visitor.read_crb(crf, crb);
+            Instruction::Bclr { bo, bi, link: _ } => {
+                if !matches!(bo, BranchOptions::BranchAlways) {
+                    let (crf, crb) = crb_from_index(bi);
+                    visitor.read_crb(crf, crb);
+                }
                 visitor.effect();
             },
             Instruction::Stwu { source, dest, imm: _ } => {
