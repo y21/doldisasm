@@ -32,7 +32,7 @@ pub fn decompile_into_ast_writer(
 
     let def_use_map = def_use_map(&analysis, &local_generations);
 
-    let variables = infer_variables(&insts, &local_generations, &analysis, &def_use_map);
+    let variables = infer_variables(&local_generations, &analysis, &def_use_map);
 
     let ast = ast::build(AstBuildParams {
         fn_address,

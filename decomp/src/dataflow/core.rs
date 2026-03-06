@@ -165,6 +165,9 @@ impl<'analysis, 'iter, D: Dataflow> ForEachCtxt<'analysis, 'iter, D> {
     pub fn state(&self) -> &D::BlockState {
         self.state
     }
+    pub fn analysis(&self) -> &D {
+        self.analysis
+    }
     pub fn effect(&mut self) {
         assert!(
             !self.apply_effect_called,
