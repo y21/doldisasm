@@ -88,6 +88,7 @@ fn write_expr(expr: &Expr, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
                 BinaryOp::Lt => writer.write_str(" < "),
                 BinaryOp::Gt => writer.write_str(" > "),
                 BinaryOp::Eq => writer.write_str(" == "),
+                BinaryOp::Ne => writer.write_str(" != "),
             }
             write_expr(right, cx, writer);
         }

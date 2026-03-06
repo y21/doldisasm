@@ -5,7 +5,7 @@ use std::{
 
 use ppc32::{
     Instruction,
-    instruction::{Crb, Register, RegisterVisitor, Spr, compute_branch_target},
+    instruction::{BranchOptions, Crb, Register, RegisterVisitor, Spr, compute_branch_target},
 };
 
 use crate::dataflow::{
@@ -127,6 +127,7 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         };
 
         for (idx, &(off, inst)) in ti_iter(&self.insts) {
+            let next_instruction_idx = InstId(idx.0 + 1);
             if let Instruction::Bc {
                 bo: _,
                 bi: _,
@@ -144,10 +145,21 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
                     store_mapping(idx, SuccessorTarget::Id(InstId(target / 4)));
                 }
 
-                store_mapping(idx, SuccessorTarget::Id(InstId(idx.0 + 1)));
-            } else if let Instruction::Bclr { bo: _, bi: _, link } = inst {
+                store_mapping(idx, SuccessorTarget::Id(next_instruction_idx));
+            } else if let Instruction::Bclr { bo, bi: _, link } = inst {
                 assert!(!link, "linking bclr not supported yet");
+
                 store_mapping(idx, SuccessorTarget::Return);
+                match bo {
+                    BranchOptions::BranchIfFalse | BranchOptions::BranchIfTrue => {
+                        store_mapping(idx, SuccessorTarget::Id(next_instruction_idx))
+                    }
+                    BranchOptions::BranchAlways => {}
+                    BranchOptions::DecCTRBranchIfFalse => todo!(),
+                    BranchOptions::DecCTRBranchIfTrue => todo!(),
+                    BranchOptions::DecCTRBranchIfNotZero => todo!(),
+                    BranchOptions::DecCTRBranchIfZero => todo!(),
+                }
             } else if let Instruction::Branch {
                 target,
                 mode,
@@ -158,7 +170,7 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
             {
                 store_mapping(idx, SuccessorTarget::Id(InstId(target / 4)));
             } else {
-                store_mapping(idx, SuccessorTarget::Id(InstId(idx.0 + 1)));
+                store_mapping(idx, SuccessorTarget::Id(next_instruction_idx));
             }
         }
 

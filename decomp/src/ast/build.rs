@@ -331,8 +331,7 @@ fn build_path(
                 let true_idx = InstId(
                     (compute_branch_target(inst_addr.0, mode, target) - analysis.fn_address) / 4,
                 );
-                let false_idx = InstId(idx.0 + 1);
-
+                let false_idx = InstId(absolute_index.0 + 1);
                 // TODO!! find the next common instruction between the two paths and only build statements until there,
                 // then build the path from *that* common instruction.
 
@@ -431,9 +430,8 @@ fn build_path(
                     todo!("{instruction:?}"); // Make sure to add apply_effect here too
                 }
             }
-            Instruction::Bclr { bo, bi: _, link } => {
+            Instruction::Bclr { bo, bi, link } => {
                 assert!(!link);
-                assert!(bo == BranchOptions::BranchAlways);
 
                 analysis.apply_effect(&mut state, idx, instruction);
 
@@ -446,7 +444,7 @@ fn build_path(
                     return_generation > 0 && !def_use_map.has_uses(return_reg, return_generation);
                 has_return_value |= cur_has_return_value;
 
-                stmts.push(Stmt {
+                let return_stmt = Stmt {
                     kind: StmtKind::Return(if cur_has_return_value {
                         Some(Expr {
                             kind: ExprKind::Var(variables.id_by_reg(return_reg, return_generation)),
@@ -454,7 +452,47 @@ fn build_path(
                     } else {
                         None
                     }),
-                });
+                };
+
+                if bo == BranchOptions::BranchAlways {
+                    stmts.push(return_stmt);
+                } else {
+                    let (crf, crb) = crb_from_index(bi);
+                    let var_id = variables.id_by_reg(
+                        Register::Cr(crf, crb),
+                        state.registers.sprs.cr(crf, crb).generation,
+                    );
+                    let mut condition = Expr {
+                        kind: ExprKind::Var(var_id),
+                    };
+                    if let BranchOptions::BranchIfFalse = bo {
+                        condition = Expr {
+                            kind: ExprKind::Unary(UnaryExpr {
+                                op: UnaryOp::Not,
+                                operand: Box::new(condition),
+                            }),
+                        };
+                    }
+
+                    stmts.push(Stmt {
+                        kind: StmtKind::If {
+                            condition,
+                            then_stmts: vec![return_stmt],
+                            else_stmts: Vec::new(),
+                        },
+                    });
+
+                    let next_path = build_path(
+                        instructions,
+                        InstId(absolute_index.0 + 1),
+                        local_generations,
+                        analysis,
+                        variables,
+                        def_use_map,
+                    );
+                    stmts.extend(next_path.stmts);
+                    has_return_value |= next_path.has_return_value;
+                }
                 break;
             }
             _ => todo!("{instruction:?}"),
@@ -513,7 +551,7 @@ pub fn build(
     );
 
     let function = Function {
-        name: format!("{fn_address:#x}"),
+        name: format!("{fn_address:#X}"),
         return_ty: if has_return_value {
             Ty { kind: TyKind::U32 } // TODO: figure out the type based on its uses?
         } else {

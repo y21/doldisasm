@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use arrayvec::ArrayVec;
 use ppc32::{
     Instruction,
-    instruction::{BranchOptions, Crb, Crf, Gpr, Register, Spr},
+    instruction::{Crb, Crf, Gpr, Register, Spr},
 };
 use typed_index_collections::TiVec;
 
@@ -299,9 +299,8 @@ fn process_instruction(
                 todo!()
             }
         }
-        Instruction::Bclr { bo, bi: _, link } => {
+        Instruction::Bclr { bo: _, bi: _, link } => {
             assert!(!link);
-            assert!(bo == BranchOptions::BranchAlways);
 
             cx.effect();
         }

@@ -33,6 +33,7 @@ pub enum BinaryOp {
     Lt,
     Gt,
     Eq,
+    Ne,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
