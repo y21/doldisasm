@@ -82,23 +82,35 @@ pub fn compute_preds_and_succs(
     });
 }
 
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Generation(u32);
+
+impl Generation {
+    pub const INITIAL: Self = Self(0);
+
+    #[must_use]
+    pub fn next(self) -> Generation {
+        Self(self.0 + 1)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RegisterWithGeneration {
     pub reg: Register,
-    pub generation: u32,
+    pub generation: Generation,
 }
 
 #[derive(Default, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LocalRegisterState {
-    pub generation: u32,
-    pub highest_generation: u32,
+    pub generation: Generation,
+    pub highest_generation: Generation,
 }
 
 // FIXME: this join impl never reaches a fixpoint, so this is going to run into infinite loops with loops
-impl Join<u32> for LocalRegisterState {
-    fn join(&self, _other: &Self, recording_state: &mut u32) -> Self {
+impl Join<Generation> for LocalRegisterState {
+    fn join(&self, _other: &Self, recording_state: &mut Generation) -> Self {
         let generation = *recording_state;
-        *recording_state += 1;
+        *recording_state = recording_state.next();
         Self {
             generation,
             highest_generation: *recording_state,
@@ -108,7 +120,7 @@ impl Join<u32> for LocalRegisterState {
 
 impl LocalRegisterState {
     pub fn next_generation(&mut self) {
-        self.highest_generation += 1;
+        self.highest_generation = self.highest_generation.next();
         self.generation = self.highest_generation;
     }
 }
@@ -144,7 +156,7 @@ pub struct LocalGenerationAnalysis<'a> {
 
 #[derive(Default)]
 pub struct RecordingState {
-    pub register_generations: RegisterState<u32>,
+    pub register_generations: RegisterState<Generation>,
 }
 
 impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
@@ -238,14 +250,14 @@ pub struct DefUseMap {
 }
 
 impl DefUseMap {
-    pub fn uses_of(&self, reg: Register, generation: u32) -> &[InstId] {
+    pub fn uses_of(&self, reg: Register, generation: Generation) -> &[InstId] {
         self.map
             .get(&RegisterWithGeneration { reg, generation })
             .map(|v| v.as_slice())
             .unwrap_or_default()
     }
 
-    pub fn has_uses(&self, reg: Register, generation: u32) -> bool {
+    pub fn has_uses(&self, reg: Register, generation: Generation) -> bool {
         !self.uses_of(reg, generation).is_empty()
     }
 }
@@ -263,7 +275,7 @@ pub fn def_use_map<'a>(
         }
 
         impl Vis<'_, '_, '_, '_> {
-            pub fn register_use(&mut self, reg: Register, generation: u32) {
+            pub fn register_use(&mut self, reg: Register, generation: Generation) {
                 let uses = self
                     .map
                     .entry(RegisterWithGeneration { reg, generation })

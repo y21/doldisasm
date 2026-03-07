@@ -18,7 +18,7 @@ use crate::{
     dataflow::{
         InstId, InstructionsDeref,
         core::{Dataflow, Results, Successors, for_each_transitive_successor},
-        ssa::{BlockState, DefUseMap, LocalGenerationAnalysis},
+        ssa::{BlockState, DefUseMap, Generation, LocalGenerationAnalysis},
         ti_iter,
         variables::{Variables, cr_bits_need_variable},
     },
@@ -495,8 +495,8 @@ fn build_path(
                 // We assume there is a return value if
                 // 1.) The r3 generation is greater than 0 at this point, meaning that r3 has been assigned a value
                 // 2.) That generation's value is not used anywhere, so the only logical reason for it to be assigned a value is to return it.
-                let cur_has_return_value =
-                    return_generation > 0 && !def_use_map.has_uses(return_reg, return_generation);
+                let cur_has_return_value = return_generation > Generation::INITIAL
+                    && !def_use_map.has_uses(return_reg, return_generation);
                 has_return_value |= cur_has_return_value;
 
                 let return_stmt = Stmt {
@@ -579,7 +579,7 @@ pub fn build(
     let mut end_of_params = false;
     for reg in 3..=8 {
         let register = Register::Gpr(Gpr(reg));
-        let uses = def_use_map.uses_of(register, 0);
+        let uses = def_use_map.uses_of(register, Generation::INITIAL);
         if uses.is_empty() {
             // No uses of this register with generation=0. No parameter.
             end_of_params = true;
@@ -587,7 +587,7 @@ pub fn build(
             // TODO: this might actually be reachable if the function just doesn't use the second parameter but uses the third one.
             assert!(!end_of_params);
 
-            let var_id = variables.id_by_reg(register, 0);
+            let var_id = variables.id_by_reg(register, Generation::INITIAL);
 
             params.push(Parameter {
                 var_id,

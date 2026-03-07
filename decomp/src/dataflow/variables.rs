@@ -11,7 +11,7 @@ use crate::{
     ast::stmt::{VarId, Variable, VariableFlags, VariableVisibility},
     dataflow::{
         core::{ForEachCtxt, Results},
-        ssa::{BlockState, DefUseMap, LocalGenerationAnalysis, RegisterWithGeneration},
+        ssa::{BlockState, DefUseMap, Generation, LocalGenerationAnalysis, RegisterWithGeneration},
     },
 };
 
@@ -50,7 +50,7 @@ impl Variables {
     }
 
     #[track_caller]
-    pub fn mk_reg_var(&mut self, reg: Register, generation: u32, origin: VarId) -> VarId {
+    pub fn mk_reg_var(&mut self, reg: Register, generation: Generation, origin: VarId) -> VarId {
         self.mk_root_reg_var(reg, generation, self.list[origin].vis())
     }
 
@@ -72,7 +72,7 @@ impl Variables {
     pub fn mk_root_reg_var(
         &mut self,
         reg: Register,
-        generation: u32,
+        generation: Generation,
         vis: VariableVisibility,
     ) -> VarId {
         let mut flags = VariableFlags::from_vis(vis);
@@ -95,13 +95,13 @@ impl Variables {
         )
     }
 
-    pub fn optional_id_by_reg(&self, reg: Register, generation: u32) -> Option<VarId> {
+    pub fn optional_id_by_reg(&self, reg: Register, generation: Generation) -> Option<VarId> {
         let reg = RegisterWithGeneration { reg, generation };
         self.reg_to_var.get(&reg).copied()
     }
 
     #[track_caller]
-    pub fn id_by_reg(&self, reg: Register, generation: u32) -> VarId {
+    pub fn id_by_reg(&self, reg: Register, generation: Generation) -> VarId {
         match self.optional_id_by_reg(reg, generation) {
             Some(var_id) => var_id,
             None => panic!("no variable for {:?}_{:?}", reg, generation),
@@ -314,14 +314,14 @@ pub fn infer_variables<'a>(
     def_use_map: &DefUseMap,
 ) -> Variables {
     fn add_initial_hidden_root_var(variables: &mut Variables, register: Register) {
-        variables.mk_root_reg_var(register, 0, VariableVisibility::Hidden);
+        variables.mk_root_reg_var(register, Generation::INITIAL, VariableVisibility::Hidden);
     }
 
     let mut variables = Variables::new();
 
     variables.mk_root_reg_var(
         Register::Gpr(Gpr::STACK_POINTER),
-        0,
+        Generation::INITIAL,
         VariableVisibility::Visible,
     );
     add_initial_hidden_root_var(&mut variables, Register::Spr(Spr::Lr));
@@ -335,11 +335,11 @@ pub fn infer_variables<'a>(
     let mut end_of_params = false;
     for reg in 3..=8 {
         let register = Register::Gpr(Gpr(reg));
-        if def_use_map.has_uses(register, 0) {
+        if def_use_map.has_uses(register, Generation::INITIAL) {
             // TODO: this might actually be reachable if the function just doesn't use the second parameter but uses the third one.
             assert!(!end_of_params);
 
-            variables.mk_root_reg_var(register, 0, VariableVisibility::Visible);
+            variables.mk_root_reg_var(register, Generation::INITIAL, VariableVisibility::Visible);
         } else {
             end_of_params = true;
         }
