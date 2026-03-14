@@ -84,7 +84,7 @@ impl<const N: usize, S: Join<T>, T> Join<[T; N]> for [S; N] {
 }
 
 pub trait Dataflow: Sized {
-    type Idx: Hash + Eq + Copy + Ord;
+    type Idx: Hash + Eq + Copy + Ord + Debug;
     type BlockState: Clone + Default + PartialEq + Join<Self::RecordingState>;
     type BlockItem: Copy;
     type RecordingState: Default;
@@ -113,6 +113,7 @@ pub struct DataflowArgs<'a, D: Dataflow> {
 pub fn run<D: Dataflow>(dataflow: &D, args: DataflowArgs<'_, D>) -> Results<D>
 where
     D::Idx: std::fmt::Debug,
+    D::BlockState: std::fmt::Debug,
 {
     let mut queue = vec![D::initial_idx()];
 
@@ -174,11 +175,16 @@ pub struct ForEachCtxt<'analysis, 'iter, D: Dataflow> {
     item: D::BlockItem,
     state: &'iter mut D::BlockState,
     apply_effect_called: bool,
+    is_entry: bool,
 }
 
 impl<'analysis, 'iter, D: Dataflow> ForEachCtxt<'analysis, 'iter, D> {
     pub fn idx(&self) -> D::Idx {
         self.idx
+    }
+    /// Whether this instruction is the entry of a block
+    pub fn is_entry(&self) -> bool {
+        self.is_entry
     }
     pub fn item(&self) -> D::BlockItem {
         self.item
@@ -199,11 +205,7 @@ impl<'analysis, 'iter, D: Dataflow> ForEachCtxt<'analysis, 'iter, D> {
     }
 }
 
-impl<D: Dataflow> Results<D>
-where
-    D::Idx: std::fmt::Debug,
-    D::BlockState: std::fmt::Debug,
-{
+impl<D: Dataflow> Results<D> {
     pub fn get(&self, idx: D::Idx) -> Option<&D::BlockState> {
         self.states.get(&idx)
     }
@@ -212,23 +214,26 @@ where
     pub fn for_each_with_input<'analysis>(
         &self,
         analysis: &'analysis D,
-        mut callback: impl FnMut(&mut ForEachCtxt<'analysis, '_, D>),
+        mut on_instruction: impl FnMut(&mut ForEachCtxt<'analysis, '_, D>),
     ) -> D::BlockState {
         let mut state: D::BlockState = D::BlockState::default();
 
         for (idx, item) in analysis.iter() {
+            let mut is_entry = false;
             if let Some(new_state) = self.states.get(&idx) {
                 state = new_state.clone();
+                is_entry = true;
             }
 
             let mut cx = ForEachCtxt {
                 analysis,
                 state: &mut state,
                 apply_effect_called: false,
+                is_entry,
                 idx,
                 item,
             };
-            callback(&mut cx);
+            on_instruction(&mut cx);
             assert!(
                 cx.apply_effect_called,
                 "callback did not call effect() for idx {:?}",

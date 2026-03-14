@@ -1,4 +1,4 @@
-use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
+use std::{collections::HashSet, convert::Infallible, iter, ops::ControlFlow};
 
 use ppc32::{
     Instruction,
@@ -19,9 +19,9 @@ use crate::{
         InstId, InstructionsDeref,
         core::{Dataflow, Results, Successors, for_each_transitive_successor},
         ssa::{BlockState, DefUseMap, Generation, LocalGenerationAnalysis},
-        ti_iter,
-        variables::{Variables, cr_bits_need_variable},
+        variables::{Variables, cr_bits_variables},
     },
+    ti_utils::ti_iter,
 };
 
 pub struct AstBuildParams<'a, 'b> {
@@ -37,6 +37,7 @@ pub struct AstBuildParams<'a, 'b> {
 struct BuildPathResult {
     stmts: Vec<Stmt>,
     has_return_value: bool,
+    state: BlockState,
 }
 
 fn build_path(
@@ -48,6 +49,7 @@ fn build_path(
     variables: &Variables,
     def_use_map: &DefUseMap,
     succs: &Successors<LocalGenerationAnalysis<'_>>,
+    prev_state: Option<&BlockState>,
 ) -> BuildPathResult {
     if let Some(end_index) = end_index
         && start_index == end_index
@@ -55,9 +57,9 @@ fn build_path(
         return BuildPathResult {
             stmts: Vec::new(),
             has_return_value: false,
+            state: prev_state.unwrap().clone(),
         };
     }
-
     let mut state = local_generations.get(start_index).map_or_else(
         || {
             assert_eq!(start_index, InstId(0));
@@ -69,9 +71,7 @@ fn build_path(
     let mut stmts = Vec::new();
     let mut has_return_value = false;
 
-    let block_instructions = &instructions[start_index..];
-
-    for (idx, (inst_addr, instruction)) in ti_iter(block_instructions) {
+    for (idx, (inst_addr, instruction)) in ti_iter(&instructions[start_index..]) {
         let absolute_index = InstId(start_index.0 + idx.0);
         if absolute_index != start_index && local_generations.get(absolute_index).is_some() {
             let next_result = build_path(
@@ -83,6 +83,7 @@ fn build_path(
                 variables,
                 def_use_map,
                 succs,
+                Some(&state),
             );
 
             stmts.extend(next_result.stmts);
@@ -91,6 +92,7 @@ fn build_path(
             return BuildPathResult {
                 stmts,
                 has_return_value,
+                state,
             };
         }
         match *instruction {
@@ -108,7 +110,10 @@ fn build_path(
 
                 analysis.apply_effect(&mut state, idx, instruction);
 
-                for crb in cr_bits_need_variable(&state, def_use_map, crf) {
+                for (crb, _) in cr_bits_variables(&state, def_use_map, crf)
+                    .into_iter()
+                    .filter(|&(_, vis)| vis == VariableVisibility::Visible)
+                {
                     let var = variables.id_by_reg(
                         Register::Cr(crf, crb),
                         state.registers.sprs.cr(crf, crb).generation,
@@ -174,7 +179,7 @@ fn build_path(
                         assert!(visibility == VariableVisibility::Visible);
 
                         let crf = Crf(0);
-                        for crb in cr_bits_need_variable(&state, def_use_map, crf) {
+                        for (crb, _) in cr_bits_variables(&state, def_use_map, crf) {
                             let var = variables.id_by_reg(
                                 Register::Cr(crf, crb),
                                 state.registers.sprs.cr(crf, crb).generation,
@@ -334,6 +339,7 @@ fn build_path(
                         variables,
                         def_use_map,
                         succs,
+                        Some(&state),
                     );
                     stmts.extend(path_result.stmts);
                     has_return_value |= path_result.has_return_value;
@@ -354,6 +360,7 @@ fn build_path(
                 );
                 let false_idx = InstId(absolute_index.0 + 1);
 
+                // TODO: maybe compute this one for each entry in successors and then just use the map here?
                 let mut true_transitive_successors = HashSet::new();
                 for_each_transitive_successor(succs, true_idx, &mut |inst| {
                     true_transitive_successors.insert(inst);
@@ -380,6 +387,7 @@ fn build_path(
                 let BuildPathResult {
                     stmts: then_stmts,
                     has_return_value: then_has_return_value,
+                    state: then_state,
                 } = build_path(
                     instructions,
                     true_idx,
@@ -389,10 +397,12 @@ fn build_path(
                     variables,
                     def_use_map,
                     succs,
+                    Some(&state),
                 );
                 let BuildPathResult {
                     stmts: else_stmts,
                     has_return_value: else_has_return_value,
+                    state: else_state,
                 } = build_path(
                     instructions,
                     false_idx,
@@ -402,6 +412,7 @@ fn build_path(
                     variables,
                     def_use_map,
                     succs,
+                    Some(&state),
                 );
 
                 has_return_value |= then_has_return_value | else_has_return_value;
@@ -435,6 +446,57 @@ fn build_path(
                 });
 
                 if let Some(common_merge_inst) = common_merge_inst {
+                    let StmtKind::If {
+                        then_stmts,
+                        else_stmts,
+                        ..
+                    } = &mut stmts.last_mut().unwrap().kind
+                    else {
+                        unreachable!()
+                    };
+
+                    let next_state = local_generations.get(common_merge_inst).unwrap();
+
+                    next_state
+                        .registers
+                        .register_iter()
+                        .zip(iter::zip(
+                            then_state.registers.register_iter(),
+                            else_state.registers.register_iter(),
+                        ))
+                        .for_each(|((reg, next_state), ((_, then_state), (_, else_state)))| {
+                            if let Some(_) = next_state.phi_origins {
+                                let dest = variables.id_by_reg(reg, next_state.generation);
+                                let dest_vis = variables.get(dest).vis();
+
+                                let then_var = variables.id_by_reg(reg, then_state.generation);
+                                let else_var = variables.id_by_reg(reg, else_state.generation);
+
+                                if dest_vis == VariableVisibility::Visible {
+                                    then_stmts.push(Stmt {
+                                        kind: StmtKind::Assign {
+                                            dest: Expr {
+                                                kind: ExprKind::Var(dest),
+                                            },
+                                            value: Expr {
+                                                kind: ExprKind::Var(then_var),
+                                            },
+                                        },
+                                    });
+                                    else_stmts.push(Stmt {
+                                        kind: StmtKind::Assign {
+                                            dest: Expr {
+                                                kind: ExprKind::Var(dest),
+                                            },
+                                            value: Expr {
+                                                kind: ExprKind::Var(else_var),
+                                            },
+                                        },
+                                    });
+                                }
+                            }
+                        });
+
                     let next_path = build_path(
                         instructions,
                         common_merge_inst,
@@ -444,6 +506,7 @@ fn build_path(
                         variables,
                         def_use_map,
                         succs,
+                        Some(&state),
                     );
                     stmts.extend(next_path.stmts);
                     has_return_value |= next_path.has_return_value;
@@ -546,6 +609,7 @@ fn build_path(
                         variables,
                         def_use_map,
                         succs,
+                        Some(&state),
                     );
                     stmts.extend(next_path.stmts);
                     has_return_value |= next_path.has_return_value;
@@ -559,6 +623,7 @@ fn build_path(
     BuildPathResult {
         stmts,
         has_return_value,
+        state,
     }
 }
 
@@ -599,6 +664,7 @@ pub fn build(
     let BuildPathResult {
         stmts,
         has_return_value,
+        state: _,
     } = build_path(
         instructions,
         InstId(0),
@@ -608,6 +674,7 @@ pub fn build(
         variables,
         def_use_map,
         succs,
+        None,
     );
 
     let function = Function {

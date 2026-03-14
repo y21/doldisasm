@@ -1,3 +1,5 @@
+use std::ops::BitAnd;
+
 use bitflags::bitflags;
 
 use crate::ast::expr::Expr;
@@ -40,6 +42,18 @@ impl Into<usize> for VarId {
 pub enum VariableVisibility {
     Visible,
     Hidden,
+}
+
+impl BitAnd<Self> for VariableVisibility {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        if self == Self::Visible && rhs == Self::Visible {
+            Self::Visible
+        } else {
+            Self::Hidden
+        }
+    }
 }
 
 bitflags! {

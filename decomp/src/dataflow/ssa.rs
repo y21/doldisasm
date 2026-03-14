@@ -8,11 +8,13 @@ use ppc32::{
     instruction::{BranchOptions, Crb, Register, RegisterVisitor, Spr, compute_branch_target},
 };
 
-use crate::dataflow::{
-    InstId, InstructionsDeref,
-    core::{Dataflow, ForEachCtxt, Join, Predecessors, Results, SuccessorTarget, Successors},
-    register_state::{CrFieldState, RegisterState},
-    ti_iter,
+use crate::{
+    dataflow::{
+        InstId, InstructionsDeref,
+        core::{Dataflow, ForEachCtxt, Join, Predecessors, Results, SuccessorTarget, Successors},
+        register_state::{CrFieldState, RegisterState},
+    },
+    ti_utils::ti_iter,
 };
 
 pub fn compute_preds_and_succs(
@@ -103,17 +105,28 @@ pub struct RegisterWithGeneration {
 #[derive(Default, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LocalRegisterState {
     pub generation: Generation,
+    /// If this generation is the result of joining two *different* generations together (phi), then this is `Some(_)` with said generations.
+    pub phi_origins: Option<[Generation; 2]>,
+    /// The highest generation currently in use
     pub highest_generation: Generation,
 }
 
 // FIXME: this join impl never reaches a fixpoint, so this is going to run into infinite loops with loops
 impl Join<Generation> for LocalRegisterState {
-    fn join(&self, _other: &Self, recording_state: &mut Generation) -> Self {
-        let generation = *recording_state;
-        *recording_state = recording_state.next();
-        Self {
-            generation,
-            highest_generation: *recording_state,
+    fn join(&self, other: &Self, recording_state: &mut Generation) -> Self {
+        if self.generation == other.generation {
+            Self {
+                generation: self.generation,
+                highest_generation: *recording_state,
+                phi_origins: None, // no phi necessary, they are the same variable
+            }
+        } else {
+            *recording_state = recording_state.next();
+            Self {
+                generation: *recording_state,
+                phi_origins: Some([self.generation, other.generation]),
+                highest_generation: *recording_state,
+            }
         }
     }
 }
@@ -171,10 +184,11 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         block_state: &mut Self::BlockState,
     ) {
         iter::zip(
-            record_state.register_generations.states_iter(),
-            block_state.registers.states_iter(),
+            record_state.register_generations.register_iter_mut(),
+            block_state.registers.register_iter_mut(),
         )
-        .for_each(|(record_gen, block_gen)| {
+        .for_each(|((record_reg, record_gen), (block_reg, block_gen))| {
+            assert_eq!(record_reg, block_reg);
             block_gen.highest_generation = *record_gen;
         });
     }
@@ -185,10 +199,11 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         block_state: &mut Self::BlockState,
     ) {
         iter::zip(
-            record_state.register_generations.states_iter(),
-            block_state.registers.states_iter(),
+            record_state.register_generations.register_iter_mut(),
+            block_state.registers.register_iter_mut(),
         )
-        .for_each(|(record_gen, block_gen)| {
+        .for_each(|((record_reg, record_gen), (block_reg, block_gen))| {
+            assert_eq!(record_reg, block_reg);
             *record_gen = block_gen.highest_generation;
         });
     }
@@ -266,6 +281,7 @@ pub fn def_use_map<'a>(
     analysis: &LocalGenerationAnalysis<'a>,
     results: &Results<LocalGenerationAnalysis<'a>>,
 ) -> DefUseMap {
+    // FIXME: currently we don't track transitive uses. This is probably important for joined visibilities to work correctly.
     let mut map = HashMap::new();
 
     results.for_each_with_input(analysis, |cx| {

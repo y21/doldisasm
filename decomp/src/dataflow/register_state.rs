@@ -1,3 +1,5 @@
+use ppc32::instruction::{Crb, Crf, Gpr, Register, Spr};
+
 use crate::dataflow::core::Join;
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -31,22 +33,87 @@ pub struct XerState<S> {
 }
 
 impl<S> RegisterState<S> {
-    pub fn states_iter(&mut self) -> impl Iterator<Item = &mut S> {
-        let SprState {
-            lr,
-            ctr,
-            xer: XerState { so, ov, ca },
-            msr,
-            cr,
-        } = &mut self.sprs;
+    pub fn by_register(&mut self, reg: Register) -> &mut S {
+        match reg {
+            Register::Gpr(gpr) => &mut self.gprs[gpr.0 as usize],
+            Register::Cr(crf, crb) => self.sprs.cr_mut(crf, crb),
+            Register::Spr(Spr::Ctr) => &mut self.sprs.ctr,
+            Register::Spr(Spr::Lr) => &mut self.sprs.lr,
+            Register::Spr(Spr::Msr) => &mut self.sprs.msr,
+            Register::Spr(Spr::Pc | Spr::Xer | Spr::Other(_)) => todo!(),
+        }
+    }
 
-        self.gprs
+    pub fn register_iter(&self) -> impl Iterator<Item = (Register, &S)> {
+        let Self {
+            gprs,
+            sprs:
+                SprState {
+                    lr,
+                    ctr,
+                    xer: _, // TODO: handle xer
+                    msr,
+                    cr,
+                },
+        } = self;
+
+        let gprs = gprs
+            .iter()
+            .enumerate()
+            .map(|(gpr, state)| (Register::Gpr(Gpr(gpr as u8)), state));
+
+        let sprs = [(Spr::Lr, lr), (Spr::Ctr, ctr), (Spr::Msr, msr)]
+            .into_iter()
+            .map(|(spr, state)| (Register::Spr(spr), state));
+
+        let crs = cr.iter().enumerate().flat_map(|(crf, cr)| {
+            let crf = Crf(crf as u8);
+            [
+                (Register::Cr(crf, Crb::Negative), &cr.lt),
+                (Register::Cr(crf, Crb::Positive), &cr.gt),
+                (Register::Cr(crf, Crb::Zero), &cr.eq),
+                (Register::Cr(crf, Crb::Overflow), &cr.so),
+            ]
+        });
+
+        gprs.chain(sprs).chain(crs)
+    }
+
+    pub fn register_iter_mut(&mut self) -> impl Iterator<Item = (Register, &mut S)> {
+        // NOTE: this is identical to `register_iter`
+        // TODO: figure out if we can deduplicate
+        let Self {
+            gprs,
+            sprs:
+                SprState {
+                    lr,
+                    ctr,
+                    xer: _, // TODO: handle xer
+                    msr,
+                    cr,
+                },
+        } = self;
+
+        let gprs = gprs
             .iter_mut()
-            .chain([lr, ctr, so, ov, ca, msr])
-            .chain(
-                cr.iter_mut()
-                    .flat_map(|CrFieldState { lt, gt, eq, so }| [lt, gt, eq, so]),
-            )
+            .enumerate()
+            .map(|(gpr, state)| (Register::Gpr(Gpr(gpr as u8)), state));
+
+        let sprs = [(Spr::Lr, lr), (Spr::Ctr, ctr), (Spr::Msr, msr)]
+            .into_iter()
+            .map(|(spr, state)| (Register::Spr(spr), state));
+
+        let crs = cr.iter_mut().enumerate().flat_map(|(crf, cr)| {
+            let crf = Crf(crf as u8);
+            [
+                (Register::Cr(crf, Crb::Negative), &mut cr.lt),
+                (Register::Cr(crf, Crb::Positive), &mut cr.gt),
+                (Register::Cr(crf, Crb::Zero), &mut cr.eq),
+                (Register::Cr(crf, Crb::Overflow), &mut cr.so),
+            ]
+        });
+
+        gprs.chain(sprs).chain(crs)
     }
 }
 

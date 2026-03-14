@@ -16,6 +16,8 @@ use crate::{
 pub mod ast;
 pub mod dataflow;
 pub mod decoder;
+pub mod ti_utils;
+pub mod visit;
 
 pub fn decompile_into_ast_writer(
     decoder: &mut Decoder<'_>,
@@ -44,7 +46,7 @@ pub fn decompile_into_ast_writer(
 
     let def_use_map = def_use_map(&analysis, &local_generations);
 
-    let variables = infer_variables(&local_generations, &analysis, &def_use_map);
+    let variables = infer_variables(&local_generations, &analysis, &def_use_map, &succs);
 
     let ast = ast::build(AstBuildParams {
         fn_address,

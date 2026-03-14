@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use ppc32::Instruction;
-use typed_index_collections::{TiSlice, TiVec};
+use typed_index_collections::TiVec;
 
 use crate::decoder::Address;
 
@@ -26,10 +26,3 @@ impl From<usize> for InstId {
 
 pub type Instructions = TiVec<InstId, (Address, Instruction)>;
 pub type InstructionsDeref = <Instructions as Deref>::Target;
-
-pub fn ti_iter<K, V>(ti: &TiSlice<K, V>) -> impl Iterator<Item = (K, &V)>
-where
-    K: From<usize>,
-{
-    ti.iter().enumerate().map(|(i, v)| (K::from(i), v))
-}
