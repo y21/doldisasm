@@ -159,7 +159,7 @@ fn build_path(
                     analysis.apply_effect(&mut state, idx, instruction);
 
                     let dest = variables.id_by_gpr(dest, &state);
-                    let visibility = variables.get(dest).vis();
+                    let visibility = variables.get_vis(dest);
 
                     if visibility == VariableVisibility::Visible {
                         stmts.push(Stmt {
@@ -179,36 +179,38 @@ fn build_path(
                         assert!(visibility == VariableVisibility::Visible);
 
                         let crf = Crf(0);
-                        for (crb, _) in cr_bits_variables(&state, def_use_map, crf) {
+                        for (crb, vis) in cr_bits_variables(&state, def_use_map, crf) {
                             let var = variables.id_by_reg(
                                 Register::Cr(crf, crb),
                                 state.registers.sprs.cr(crf, crb).generation,
                             );
 
-                            stmts.push(Stmt {
-                                kind: StmtKind::Assign {
-                                    dest: Expr {
-                                        kind: ExprKind::Var(var),
-                                    },
-                                    value: Expr {
-                                        kind: ExprKind::Binary(BinaryExpr {
-                                            op: match crb {
-                                                Crb::Negative => BinaryOp::Lt,
-                                                Crb::Positive => BinaryOp::Gt,
-                                                Crb::Zero => BinaryOp::Eq,
-                                                Crb::Overflow => todo!(),
-                                            },
-                                            left: Box::new(Expr {
-                                                // TODO: should we do a cast to i16 here?
-                                                kind: ExprKind::Var(dest),
+                            if vis == VariableVisibility::Visible {
+                                stmts.push(Stmt {
+                                    kind: StmtKind::Assign {
+                                        dest: Expr {
+                                            kind: ExprKind::Var(var),
+                                        },
+                                        value: Expr {
+                                            kind: ExprKind::Binary(BinaryExpr {
+                                                op: match crb {
+                                                    Crb::Negative => BinaryOp::Lt,
+                                                    Crb::Positive => BinaryOp::Gt,
+                                                    Crb::Zero => BinaryOp::Eq,
+                                                    Crb::Overflow => todo!(),
+                                                },
+                                                left: Box::new(Expr {
+                                                    // TODO: should we do a cast to i16 here?
+                                                    kind: ExprKind::Var(dest),
+                                                }),
+                                                right: Box::new(Expr {
+                                                    kind: ExprKind::Immediate16(0),
+                                                }),
                                             }),
-                                            right: Box::new(Expr {
-                                                kind: ExprKind::Immediate16(0),
-                                            }),
-                                        }),
+                                        },
                                     },
-                                },
-                            });
+                                });
+                            }
                         }
                     }
                 } else {
@@ -252,7 +254,7 @@ fn build_path(
                 analysis.apply_effect(&mut state, idx, instruction);
 
                 let dest = variables.id_by_gpr(dest, &state);
-                let visibility = variables.get(dest).vis();
+                let visibility = variables.get_vis(dest);
 
                 if visibility == VariableVisibility::Visible {
                     stmts.push(Stmt {
@@ -274,7 +276,7 @@ fn build_path(
                     analysis.apply_effect(&mut state, idx, instruction);
 
                     let dest: VarId = variables.id_by_stack_mem(imm.0);
-                    let vis = variables.get(dest).vis();
+                    let vis = variables.get_vis(dest);
 
                     // Don't create an assignment if this is just saving a callee-saved register
                     if vis == VariableVisibility::Visible {
@@ -467,32 +469,38 @@ fn build_path(
                         .for_each(|((reg, next_state), ((_, then_state), (_, else_state)))| {
                             if let Some(_) = next_state.phi_origins {
                                 let dest = variables.id_by_reg(reg, next_state.generation);
-                                let dest_vis = variables.get(dest).vis();
-
-                                let then_var = variables.id_by_reg(reg, then_state.generation);
-                                let else_var = variables.id_by_reg(reg, else_state.generation);
+                                let dest_vis = variables.get_vis(dest);
 
                                 if dest_vis == VariableVisibility::Visible {
-                                    then_stmts.push(Stmt {
-                                        kind: StmtKind::Assign {
-                                            dest: Expr {
-                                                kind: ExprKind::Var(dest),
+                                    if let Some(then_var) =
+                                        variables.optional_id_by_reg(reg, then_state.generation)
+                                    {
+                                        then_stmts.push(Stmt {
+                                            kind: StmtKind::Assign {
+                                                dest: Expr {
+                                                    kind: ExprKind::Var(dest),
+                                                },
+                                                value: Expr {
+                                                    kind: ExprKind::Var(then_var),
+                                                },
                                             },
-                                            value: Expr {
-                                                kind: ExprKind::Var(then_var),
+                                        });
+                                    }
+
+                                    if let Some(else_var) =
+                                        variables.optional_id_by_reg(reg, else_state.generation)
+                                    {
+                                        else_stmts.push(Stmt {
+                                            kind: StmtKind::Assign {
+                                                dest: Expr {
+                                                    kind: ExprKind::Var(dest),
+                                                },
+                                                value: Expr {
+                                                    kind: ExprKind::Var(else_var),
+                                                },
                                             },
-                                        },
-                                    });
-                                    else_stmts.push(Stmt {
-                                        kind: StmtKind::Assign {
-                                            dest: Expr {
-                                                kind: ExprKind::Var(dest),
-                                            },
-                                            value: Expr {
-                                                kind: ExprKind::Var(else_var),
-                                            },
-                                        },
-                                    });
+                                        });
+                                    }
                                 }
                             }
                         });
@@ -524,7 +532,7 @@ fn build_path(
                     analysis.apply_effect(&mut state, idx, instruction);
 
                     let dest = variables.id_by_gpr(dest, &state);
-                    let vis = variables.get(dest).vis();
+                    let vis = variables.get_vis(dest);
                     if vis == VariableVisibility::Visible {
                         stmts.push(Stmt {
                             kind: StmtKind::Assign {

@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Add, Deref};
 
 use ppc32::Instruction;
 use typed_index_collections::TiVec;
@@ -15,6 +15,14 @@ pub struct InstId(pub u32);
 impl Into<usize> for InstId {
     fn into(self) -> usize {
         self.0 as usize
+    }
+}
+
+impl Add<u32> for InstId {
+    type Output = Self;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        Self(self.0 + rhs)
     }
 }
 

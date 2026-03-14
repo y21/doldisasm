@@ -1,4 +1,4 @@
-use std::ops::BitAnd;
+use std::ops::{BitAnd, BitOr};
 
 use bitflags::bitflags;
 
@@ -49,6 +49,18 @@ impl BitAnd<Self> for VariableVisibility {
 
     fn bitand(self, rhs: Self) -> Self::Output {
         if self == Self::Visible && rhs == Self::Visible {
+            Self::Visible
+        } else {
+            Self::Hidden
+        }
+    }
+}
+
+impl BitOr<Self> for VariableVisibility {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        if self == Self::Visible || rhs == Self::Visible {
             Self::Visible
         } else {
             Self::Hidden

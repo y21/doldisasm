@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::ControlFlow};
 
 use ppc32::{
     Instruction,
-    instruction::{Crb, Crf, Gpr, Register, Spr, compute_branch_target},
+    instruction::{BranchOptions, Crb, Crf, Gpr, Register, Spr, compute_branch_target},
 };
 use typed_index_collections::TiVec;
 
@@ -39,6 +39,10 @@ impl Variables {
 
     pub fn get(&self, var: VarId) -> &Variable {
         &self.list[var]
+    }
+
+    pub fn get_vis(&self, var: VarId) -> VariableVisibility {
+        self.get(var).vis()
     }
 
     #[track_caller]
@@ -192,8 +196,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
             } => {
                 let source_vis = self
                     .variables
-                    .get(self.variables.id_by_gpr(source, &state))
-                    .vis();
+                    .get_vis(self.variables.id_by_gpr(source, &state));
                 cx.analysis.apply_effect(state, idx, &inst);
                 for (crb, vis) in cr_bits_variables(&state, self.def_use_map, crf) {
                     self.variables.mk_root_reg_var(
@@ -321,26 +324,21 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 {
                     let true_vis = self
                         .variables
-                        .get(self.variables.id_by_reg(register, true_gen))
-                        .vis();
+                        .optional_id_by_reg(register, true_gen)
+                        .map_or_else(|| VariableVisibility::Hidden, |v| self.variables.get_vis(v));
                     let false_vis = self
                         .variables
-                        .get(self.variables.id_by_reg(register, false_gen))
-                        .vis();
-                    let dest_vis = if true_vis == VariableVisibility::Visible
-                        || false_vis == VariableVisibility::Visible
-                    {
-                        VariableVisibility::Visible
-                    } else {
-                        VariableVisibility::Hidden
-                    };
+                        .optional_id_by_reg(register, false_gen)
+                        .map_or_else(|| VariableVisibility::Hidden, |v| self.variables.get_vis(v));
+
                     if self
                         .variables
                         .optional_id_by_reg(register, next_gen)
                         .is_none()
                     {
                         // The variable may already exist if the common instruction has multiple (other) predecessors
-                        self.variables.mk_root_reg_var(register, next_gen, dest_vis);
+                        self.variables
+                            .mk_root_reg_var(register, next_gen, true_vis | false_vis);
                     }
                 }
 
@@ -377,11 +375,16 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 }
                 ControlFlow::Continue(())
             }
-            Instruction::Bclr { bo: _, bi: _, link } => {
+            Instruction::Bclr { bo, bi: _, link } => {
                 assert!(!link);
 
                 cx.analysis.apply_effect(state, idx, &inst);
-                ControlFlow::Break(())
+                if bo == BranchOptions::BranchAlways {
+                    ControlFlow::Break(())
+                } else {
+                    visit::visit_path(self, cx, Some(state), absolute_idx + 1, end_idx);
+                    ControlFlow::Break(())
+                }
             }
             _ => todo!("{inst:x?}"),
         }
