@@ -112,8 +112,9 @@ pub struct DataflowArgs<'a, D: Dataflow> {
 
 pub fn run<D: Dataflow>(dataflow: &D, args: DataflowArgs<'_, D>) -> Results<D>
 where
-    D::Idx: std::fmt::Debug,
-    D::BlockState: std::fmt::Debug,
+    D::Idx: Debug,
+    D::BlockState: Debug,
+    D::BlockItem: Debug,
 {
     let mut queue = vec![D::initial_idx()];
 
@@ -131,9 +132,13 @@ where
         entry_states.insert(idx, state.clone());
 
         for (idx, item) in dataflow.iter_block(idx) {
+            let span = tracing::span!(tracing::Level::DEBUG, "item", "{idx:?} {item:?}");
+            let _enter = span.enter();
             dataflow.apply_effect(&mut state, idx, &item);
 
             if let Some(succs) = args.succs.get(&idx) {
+                tracing::debug!("successors = {succs:?}");
+
                 dataflow.post_block_record(&mut record_state, &mut state);
                 // Note: `succs` may be empty for `blr` (exit blocks).
 

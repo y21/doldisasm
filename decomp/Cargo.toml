@@ -8,6 +8,7 @@ ppc32 = { path = "../ppc32" }
 typed-index-collections = "3.4.0"
 arrayvec = "0.7.6"
 bitflags = "2.11.0"
+tracing = "0.1.44"
 
 [dev-dependencies]
 glob = "0.3.3" # used by ui tests

@@ -11,6 +11,8 @@ mod disasm;
 mod trace;
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
     let Args {
         input,
         addr,
