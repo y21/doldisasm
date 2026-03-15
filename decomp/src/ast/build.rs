@@ -3,7 +3,8 @@ use std::{collections::HashSet, convert::Infallible, iter, ops::ControlFlow};
 use ppc32::{
     Instruction,
     instruction::{
-        BranchOptions, Crb, Crf, Gpr, Register, Spr, compute_branch_target, crb_from_index,
+        BranchOptions, Crb, Crf, Gpr, Register, Spr, XerRegister, compute_branch_target,
+        crb_from_index,
     },
 };
 
@@ -19,7 +20,7 @@ use crate::{
         InstId, InstructionsDeref,
         core::{Dataflow, Results, Successors, for_each_transitive_successor},
         ssa::{BlockState, DefUseMap, Generation, LocalGenerationAnalysis},
-        variables::{Variables, cr_bits_variables},
+        variables::{Variables, cr_bits_variables, xer_variables},
     },
     ti_utils::ti_iter,
 };
@@ -38,6 +39,49 @@ struct BuildPathResult {
     stmts: Vec<Stmt>,
     has_return_value: bool,
     state: BlockState,
+}
+
+fn build_crf_assignments(
+    state: &BlockState,
+    def_use_map: &DefUseMap,
+    variables: &Variables,
+    stmts: &mut Vec<Stmt>,
+    dest: VarId,
+) {
+    let crf = Crf(0);
+    for (crb, vis) in cr_bits_variables(&state, def_use_map, crf) {
+        let var = variables.id_by_reg(
+            Register::Cr(crf, crb),
+            state.registers.sprs.cr(crf, crb).generation,
+        );
+
+        if vis == VariableVisibility::Visible {
+            stmts.push(Stmt {
+                kind: StmtKind::Assign {
+                    dest: Expr {
+                        kind: ExprKind::Var(var),
+                    },
+                    value: Expr {
+                        kind: ExprKind::Binary(BinaryExpr {
+                            op: match crb {
+                                Crb::Negative => BinaryOp::Lt,
+                                Crb::Positive => BinaryOp::Gt,
+                                Crb::Zero => BinaryOp::Eq,
+                                Crb::Overflow => todo!(),
+                            },
+                            left: Box::new(Expr {
+                                // TODO: should we do a cast to i16 here?
+                                kind: ExprKind::Var(dest),
+                            }),
+                            right: Box::new(Expr {
+                                kind: ExprKind::Immediate16(0),
+                            }),
+                        }),
+                    },
+                },
+            });
+        }
+    }
 }
 
 fn build_path(
@@ -178,40 +222,7 @@ fn build_path(
                         // Make sure code doesn't try to branch on a hidden variable. This could happen, but I'm not sure how to deal with that yet.
                         assert!(visibility == VariableVisibility::Visible);
 
-                        let crf = Crf(0);
-                        for (crb, vis) in cr_bits_variables(&state, def_use_map, crf) {
-                            let var = variables.id_by_reg(
-                                Register::Cr(crf, crb),
-                                state.registers.sprs.cr(crf, crb).generation,
-                            );
-
-                            if vis == VariableVisibility::Visible {
-                                stmts.push(Stmt {
-                                    kind: StmtKind::Assign {
-                                        dest: Expr {
-                                            kind: ExprKind::Var(var),
-                                        },
-                                        value: Expr {
-                                            kind: ExprKind::Binary(BinaryExpr {
-                                                op: match crb {
-                                                    Crb::Negative => BinaryOp::Lt,
-                                                    Crb::Positive => BinaryOp::Gt,
-                                                    Crb::Zero => BinaryOp::Eq,
-                                                    Crb::Overflow => todo!(),
-                                                },
-                                                left: Box::new(Expr {
-                                                    // TODO: should we do a cast to i16 here?
-                                                    kind: ExprKind::Var(dest),
-                                                }),
-                                                right: Box::new(Expr {
-                                                    kind: ExprKind::Immediate16(0),
-                                                }),
-                                            }),
-                                        },
-                                    },
-                                });
-                            }
-                        }
+                        build_crf_assignments(&state, def_use_map, variables, &mut stmts, dest);
                     }
                 } else {
                     // TODO: once we implement this, most of the above also applies here (Rc=1).
@@ -263,6 +274,245 @@ fn build_path(
                                 kind: ExprKind::Var(dest),
                             },
                             value: Expr { kind: source },
+                        },
+                    });
+                }
+            }
+            Instruction::Subfic { dest, source, simm } => {
+                let source = variables.id_by_gpr(source, &state);
+                analysis.apply_effect(&mut state, idx, instruction);
+                let dest = variables.id_by_gpr(dest, &state);
+                let ca = variables.id_by_reg(
+                    Register::Spr(Spr::Xer(XerRegister::Ca)),
+                    state.registers.sprs.xer.ca.generation,
+                );
+                let visibility = variables.get_vis(dest);
+                if visibility == VariableVisibility::Visible {
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            dest: Expr {
+                                kind: ExprKind::Var(dest),
+                            },
+                            value: Expr {
+                                kind: ExprKind::Binary(BinaryExpr {
+                                    op: BinaryOp::Sub,
+                                    left: Box::new(Expr {
+                                        kind: ExprKind::Immediate16(simm),
+                                    }),
+                                    right: Box::new(Expr {
+                                        kind: ExprKind::Var(source),
+                                    }),
+                                }),
+                            },
+                        },
+                    });
+
+                    // XER[CA] bit: simm >= source
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            dest: Expr {
+                                kind: ExprKind::Var(ca),
+                            },
+                            value: Expr {
+                                kind: ExprKind::Binary(BinaryExpr {
+                                    op: BinaryOp::Ge,
+                                    left: Box::new(Expr {
+                                        kind: ExprKind::Immediate16(simm),
+                                    }),
+                                    right: Box::new(Expr {
+                                        kind: ExprKind::Var(source),
+                                    }),
+                                }),
+                            },
+                        },
+                    });
+                }
+            }
+            Instruction::Subfe {
+                dest,
+                source_a,
+                source_b,
+                oe,
+                rc,
+            } => {
+                // source_a - source_b - (1 - CA)
+                let source_a = variables.id_by_gpr(source_a, &state);
+                let source_b = variables.id_by_gpr(source_b, &state);
+                let ca = variables.id_by_reg(
+                    Register::Spr(Spr::Xer(XerRegister::Ca)),
+                    state.registers.sprs.xer.ca.generation,
+                );
+                analysis.apply_effect(&mut state, idx, instruction);
+                let dest = variables.id_by_gpr(dest, &state);
+                if variables.get_vis(dest) == VariableVisibility::Visible {
+                    // source_a - source_b
+                    let src_sub = Expr {
+                        kind: ExprKind::Binary(BinaryExpr {
+                            op: BinaryOp::Sub,
+                            left: Box::new(Expr {
+                                kind: ExprKind::Var(source_a),
+                            }),
+                            right: Box::new(Expr {
+                                kind: ExprKind::Var(source_b),
+                            }),
+                        }),
+                    };
+                    // 1 - CA
+                    let ca_sub = Expr {
+                        kind: ExprKind::Binary(BinaryExpr {
+                            op: BinaryOp::Sub,
+                            left: Box::new(Expr {
+                                kind: ExprKind::Immediate16(1),
+                            }),
+                            right: Box::new(Expr {
+                                kind: ExprKind::Var(ca),
+                            }),
+                        }),
+                    };
+                    let expr = Expr {
+                        kind: ExprKind::Binary(BinaryExpr {
+                            op: BinaryOp::Sub,
+                            left: Box::new(src_sub),
+                            right: Box::new(ca_sub),
+                        }),
+                    };
+
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            dest: Expr {
+                                kind: ExprKind::Var(dest),
+                            },
+                            value: expr,
+                        },
+                    });
+                }
+
+                let ca_out = variables.id_by_reg(
+                    Register::Spr(Spr::Xer(XerRegister::Ca)),
+                    state.registers.sprs.xer.ca.generation,
+                );
+
+                if variables.get_vis(ca_out) == VariableVisibility::Visible {
+                    // CA_out = lhs + CA_in > rhs
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            dest: Expr {
+                                kind: ExprKind::Var(ca_out),
+                            },
+                            value: Expr {
+                                kind: ExprKind::Binary(BinaryExpr {
+                                    op: BinaryOp::Gt,
+                                    left: Box::new(Expr {
+                                        kind: ExprKind::Binary(BinaryExpr {
+                                            op: BinaryOp::Add,
+                                            left: Box::new(Expr {
+                                                kind: ExprKind::Var(source_a),
+                                            }),
+                                            right: Box::new(Expr {
+                                                kind: ExprKind::Var(ca),
+                                            }),
+                                        }),
+                                    }),
+                                    right: Box::new(Expr {
+                                        kind: ExprKind::Var(source_b),
+                                    }),
+                                }),
+                            },
+                        },
+                    });
+                }
+
+                if oe {
+                    for (xer, generation, _) in xer_variables(&state, def_use_map)
+                        .into_iter()
+                        .filter(|(.., vis)| *vis == VariableVisibility::Visible)
+                    {
+                        match xer {
+                            XerRegister::Ov => {
+                                // XER[OV]: ((source_a ^ source_b) & (source_a ^ result)) >> 31
+                                let ov = variables.id_by_reg(
+                                    Register::Spr(Spr::Xer(XerRegister::Ov)),
+                                    generation,
+                                );
+                                stmts.push(Stmt {
+                                    kind: StmtKind::Assign {
+                                        dest: Expr {
+                                            kind: ExprKind::Var(ov),
+                                        },
+                                        value: Expr {
+                                            kind: ExprKind::Binary(BinaryExpr {
+                                                op: BinaryOp::Rhs,
+                                                left: Box::new(Expr {
+                                                    kind: ExprKind::Binary(BinaryExpr {
+                                                        op: BinaryOp::BitAnd,
+                                                        left: Box::new(Expr {
+                                                            kind: ExprKind::Binary(BinaryExpr {
+                                                                op: BinaryOp::Xor,
+                                                                left: Box::new(Expr {
+                                                                    kind: ExprKind::Var(source_a),
+                                                                }),
+                                                                right: Box::new(Expr {
+                                                                    kind: ExprKind::Var(source_b),
+                                                                }),
+                                                            }),
+                                                        }),
+                                                        right: Box::new(Expr {
+                                                            kind: ExprKind::Binary(BinaryExpr {
+                                                                op: BinaryOp::Xor,
+                                                                left: Box::new(Expr {
+                                                                    kind: ExprKind::Var(source_a),
+                                                                }),
+                                                                right: Box::new(Expr {
+                                                                    kind: ExprKind::Var(dest),
+                                                                }),
+                                                            }),
+                                                        }),
+                                                    }),
+                                                }),
+                                                right: Box::new(Expr {
+                                                    kind: ExprKind::Immediate16(31),
+                                                }),
+                                            }),
+                                        },
+                                    },
+                                })
+                            }
+                            XerRegister::So => {
+                                // TODO: combine previous So + Ov
+                            }
+                            XerRegister::Ca => {
+                                // Unconditionally computed above.
+                            }
+                        }
+                    }
+                }
+
+                if rc {
+                    build_crf_assignments(&state, def_use_map, variables, &mut stmts, dest);
+                }
+            }
+            Instruction::Andi { source, dest, simm } => {
+                let source = variables.id_by_gpr(source, &state);
+                analysis.apply_effect(&mut state, idx, instruction);
+                let dest = variables.id_by_gpr(dest, &state);
+                let vis = variables.get_vis(dest);
+                if vis == VariableVisibility::Visible {
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            dest: Expr {
+                                kind: ExprKind::Var(dest),
+                            },
+                            value: Expr {
+                                kind: ExprKind::Binary(BinaryExpr {
+                                    op: BinaryOp::BitAnd,
+                                    left: Box::new(Expr {
+                                        kind: ExprKind::Var(source),
+                                    }),
+                                    right: Box::new(Expr {
+                                        kind: ExprKind::Immediate16(simm),
+                                    }),
+                                }),
+                            },
                         },
                     });
                 }

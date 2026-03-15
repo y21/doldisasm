@@ -163,6 +163,25 @@ fn main() -> ExitCode {
             0x7c, 0x69, 0x1b, 0x78, 	    // mr      r9,r3
             0x4b, 0xff, 0xff, 0xe0, 	    // b       deadbf04 <test+0x14>
         ),
+        // int y = 1;
+        // if(x) {
+        //     y = 55;
+        // }
+        // d(y);
+        test!(branchless_assign
+            0x94, 0x21, 0xff, 0xf8, 	        // stwu    r1,-8(r1)
+            0x7c, 0x08, 0x02, 0xa6, 	        // mflr    r0
+            0x90, 0x01, 0x00, 0x0c, 	        // stw     r0,12(r1)
+            0x20, 0x63, 0x00, 0x00, 	        // subfic  r3,r3,0
+            0x7c, 0x63, 0x19, 0x10, 	        // subfe   r3,r3,r3
+            0x70, 0x63, 0x00, 0x36, 	        // andi.   r3,r3,54
+            0x38, 0x63, 0x00, 0x01, 	        // addi    r3,r3,1
+            0x48, 0x00, 0x00, 0x15, 	        // bl      deadbf20 <test+0x30>
+            0x80, 0x01, 0x00, 0x0c, 	        // lwz     r0,12(r1)
+            0x7c, 0x08, 0x03, 0xa6, 	        // mtlr    r0
+            0x38, 0x21, 0x00, 0x08, 	        // addi    r1,r1,8
+            0x4e, 0x80, 0x00, 0x20, 	        // blr
+        ),
     ];
     let pattern = env::var("PATTERN")
         .map_or_else(|_| Pattern::new("*"), |pat| Pattern::new(&pat))

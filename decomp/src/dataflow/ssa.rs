@@ -5,7 +5,10 @@ use std::{
 
 use ppc32::{
     Instruction,
-    instruction::{BranchOptions, Crb, Register, RegisterVisitor, Spr, compute_branch_target},
+    instruction::{
+        BranchOptions, Crb, Crf, Gpr, MicroSpr, Register, RegisterVisitor, Spr, XerRegister,
+        compute_branch_target,
+    },
 };
 
 use crate::{
@@ -228,10 +231,10 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
             state: &'a mut <LocalGenerationAnalysis<'b> as Dataflow>::BlockState,
         }
         impl<'a, 'b> RegisterVisitor for Vis<'a, 'b> {
-            fn write_crb(&mut self, crf: ppc32::instruction::Crf, crb: ppc32::instruction::Crb) {
+            fn write_crb(&mut self, crf: Crf, crb: Crb) {
                 self.state.registers.sprs.cr_mut(crf, crb).next_generation();
             }
-            fn write_crf(&mut self, crf: ppc32::instruction::Crf) {
+            fn write_crf(&mut self, crf: Crf) {
                 let CrFieldState { lt, gt, eq, so } =
                     &mut self.state.registers.sprs.cr[crf.0 as usize];
                 lt.next_generation();
@@ -239,17 +242,19 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
                 eq.next_generation();
                 so.next_generation();
             }
-            fn write_gpr(&mut self, gpr: ppc32::instruction::Gpr) {
+            fn write_gpr(&mut self, gpr: Gpr) {
                 self.state.registers.gprs[gpr.0 as usize].next_generation();
             }
-            fn write_spr(&mut self, spr: ppc32::instruction::Spr) {
+            fn write_spr(&mut self, spr: MicroSpr) {
                 match spr {
-                    ppc32::instruction::Spr::Xer => todo!(),
-                    ppc32::instruction::Spr::Lr => self.state.registers.sprs.lr.next_generation(),
-                    ppc32::instruction::Spr::Ctr => todo!(),
-                    ppc32::instruction::Spr::Msr => self.state.registers.sprs.msr.next_generation(),
-                    ppc32::instruction::Spr::Pc => todo!(),
-                    ppc32::instruction::Spr::Other(_) => todo!(),
+                    Spr::Xer(XerRegister::So) => self.state.registers.sprs.xer.so.next_generation(),
+                    Spr::Xer(XerRegister::Ov) => self.state.registers.sprs.xer.ov.next_generation(),
+                    Spr::Xer(XerRegister::Ca) => self.state.registers.sprs.xer.ca.next_generation(),
+                    Spr::Lr => self.state.registers.sprs.lr.next_generation(),
+                    Spr::Ctr => todo!(),
+                    Spr::Msr => self.state.registers.sprs.msr.next_generation(),
+                    Spr::Pc => todo!(),
+                    Spr::Other(_) => todo!(),
                 }
             }
         }
@@ -326,11 +331,19 @@ pub fn def_use_map<'a>(
                     self.cx.state().registers.gprs[gpr.0 as usize].generation,
                 );
             }
-            fn read_spr(&mut self, spr: ppc32::instruction::Spr) {
+            fn read_spr(&mut self, spr: MicroSpr) {
                 self.register_use(
                     Register::Spr(spr),
                     match spr {
-                        Spr::Xer => todo!(),
+                        Spr::Xer(XerRegister::So) => {
+                            self.cx.state().registers.sprs.xer.so.generation
+                        }
+                        Spr::Xer(XerRegister::Ov) => {
+                            self.cx.state().registers.sprs.xer.ov.generation
+                        }
+                        Spr::Xer(XerRegister::Ca) => {
+                            self.cx.state().registers.sprs.xer.ca.generation
+                        }
                         Spr::Lr => self.cx.state().registers.sprs.lr.generation,
                         Spr::Ctr => todo!(),
                         Spr::Msr => self.cx.state().registers.sprs.msr.generation,

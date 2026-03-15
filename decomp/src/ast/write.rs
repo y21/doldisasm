@@ -73,6 +73,7 @@ fn write_var_id(var_id: VarId, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
 }
 
 fn write_expr(expr: &Expr, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
+    // TODO: add parentheses when necessary!
     match expr.kind {
         ExprKind::Var(var_id) => {
             write_var_id(var_id, cx, writer);
@@ -85,10 +86,15 @@ fn write_expr(expr: &Expr, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
             write_expr(left, cx, writer);
             match op {
                 BinaryOp::Add => writer.write_str(" + "),
+                BinaryOp::Sub => writer.write_str(" - "),
                 BinaryOp::Lt => writer.write_str(" < "),
                 BinaryOp::Gt => writer.write_str(" > "),
+                BinaryOp::Ge => writer.write_str(" >= "),
                 BinaryOp::Eq => writer.write_str(" == "),
                 BinaryOp::Ne => writer.write_str(" != "),
+                BinaryOp::BitAnd => writer.write_str(" & "),
+                BinaryOp::Xor => writer.write_str(" ^ "),
+                BinaryOp::Rhs => writer.write_str(" >> "),
             }
             write_expr(right, cx, writer);
         }

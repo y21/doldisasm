@@ -1,4 +1,4 @@
-use ppc32::instruction::{Crb, Crf, Gpr, Register, Spr};
+use ppc32::instruction::{Crb, Crf, Gpr, Register, Spr, XerRegister};
 
 use crate::dataflow::core::Join;
 
@@ -40,7 +40,10 @@ impl<S> RegisterState<S> {
             Register::Spr(Spr::Ctr) => &mut self.sprs.ctr,
             Register::Spr(Spr::Lr) => &mut self.sprs.lr,
             Register::Spr(Spr::Msr) => &mut self.sprs.msr,
-            Register::Spr(Spr::Pc | Spr::Xer | Spr::Other(_)) => todo!(),
+            Register::Spr(Spr::Xer(XerRegister::So)) => &mut self.sprs.xer.so,
+            Register::Spr(Spr::Xer(XerRegister::Ov)) => &mut self.sprs.xer.ov,
+            Register::Spr(Spr::Xer(XerRegister::Ca)) => &mut self.sprs.xer.ca,
+            Register::Spr(Spr::Pc | Spr::Other(_)) => todo!(),
         }
     }
 

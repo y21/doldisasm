@@ -2,7 +2,9 @@ use std::{collections::HashMap, ops::ControlFlow};
 
 use ppc32::{
     Instruction,
-    instruction::{BranchOptions, Crb, Crf, Gpr, Register, Spr, compute_branch_target},
+    instruction::{
+        BranchOptions, Crb, Crf, Gpr, Register, Spr, XerRegister, compute_branch_target,
+    },
 };
 use typed_index_collections::TiVec;
 
@@ -162,6 +164,48 @@ pub fn cr_bits_variables(
     })
 }
 
+pub fn xer_variables(
+    state: &BlockState,
+    def_use_map: &DefUseMap,
+) -> [(XerRegister, Generation, VariableVisibility); 3] {
+    let xer_state = &state.registers.sprs.xer;
+    [
+        (XerRegister::So, xer_state.so),
+        (XerRegister::Ov, xer_state.ov),
+        (XerRegister::Ca, xer_state.ca),
+    ]
+    .map(|(xer, state)| {
+        let spr = Spr::Xer(xer);
+        let uses = def_use_map.has_uses(Register::Spr(spr), state.generation);
+        let vis = if uses {
+            VariableVisibility::Visible
+        } else {
+            VariableVisibility::Hidden
+        };
+        (xer, state.generation, vis)
+    })
+}
+
+fn mk_cr_variables(state: &BlockState, this: &mut CollectVariables<'_>) {
+    let crf = Crf(0);
+    for (crb, vis) in cr_bits_variables(&state, this.def_use_map, crf) {
+        this.variables.mk_root_reg_var(
+            Register::Cr(crf, crb),
+            state.registers.sprs.cr(crf, crb).generation,
+            vis,
+        );
+    }
+}
+
+fn mk_xer_variables(state: &BlockState, vars: &[XerRegister], this: &mut CollectVariables<'_>) {
+    for (xer, generation, vis) in xer_variables(state, this.def_use_map) {
+        if vars.contains(&xer) {
+            this.variables
+                .mk_root_reg_var(Register::Spr(Spr::Xer(xer)), generation, vis);
+        }
+    }
+}
+
 struct CollectVariables<'a> {
     variables: &'a mut Variables,
     def_use_map: &'a DefUseMap,
@@ -218,14 +262,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 self.variables.mk_gpr_var(dest, &state, source);
 
                 if rc {
-                    let crf = Crf(0);
-                    for (crb, vis) in cr_bits_variables(&state, self.def_use_map, crf) {
-                        self.variables.mk_root_reg_var(
-                            Register::Cr(crf, crb),
-                            state.registers.sprs.cr(crf, crb).generation,
-                            vis,
-                        );
-                    }
+                    mk_cr_variables(state, self);
                 }
                 ControlFlow::Continue(())
             }
@@ -261,6 +298,59 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                     cx.analysis.apply_effect(state, idx, &inst);
                     self.variables.mk_gpr_var(dest, &state, source);
                 }
+                ControlFlow::Continue(())
+            }
+            Instruction::Subfic {
+                dest,
+                source,
+                simm: _,
+            } => {
+                let source = self.variables.id_by_gpr(source, state);
+                cx.analysis.apply_effect(state, idx, &inst);
+                self.variables.mk_gpr_var(dest, state, source);
+                // TODO: we could perhaps check if this generation is used anywhere and make it hidden
+                self.variables.mk_reg_var(
+                    Register::Spr(Spr::Xer(XerRegister::Ca)),
+                    state.registers.sprs.xer.ca.generation,
+                    source,
+                );
+                ControlFlow::Continue(())
+            }
+            Instruction::Subfe {
+                dest,
+                source_a,
+                source_b,
+                oe,
+                rc,
+            } => {
+                let source_a = self.variables.id_by_gpr(source_a, state);
+                let source_b = self.variables.id_by_gpr(source_b, state);
+                let dest_vis = self.variables.get_vis(source_a) & self.variables.get_vis(source_b);
+                cx.analysis.apply_effect(state, idx, &inst);
+                let dest = self.variables.mk_root_gpr_var(dest, state, dest_vis);
+                if rc {
+                    mk_cr_variables(state, self);
+                }
+                // TODO: we could perhaps check if this generation is used anywhere and make it hidden
+                self.variables.mk_reg_var(
+                    Register::Spr(Spr::Xer(XerRegister::Ca)),
+                    state.registers.sprs.xer.ca.generation,
+                    dest,
+                );
+                if oe {
+                    mk_xer_variables(state, &[XerRegister::Ov, XerRegister::So], self);
+                }
+                ControlFlow::Continue(())
+            }
+            Instruction::Andi {
+                source,
+                dest,
+                simm: _,
+            } => {
+                let source = self.variables.id_by_gpr(source, state);
+                cx.analysis.apply_effect(state, idx, &inst);
+                self.variables.mk_gpr_var(dest, state, source);
+                mk_cr_variables(state, self);
                 ControlFlow::Continue(())
             }
             Instruction::Stw { source, dest, imm } => {

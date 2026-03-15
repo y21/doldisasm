@@ -30,10 +30,15 @@ pub struct BinaryExpr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
+    Sub,
+    Xor,
+    Rhs,
     Lt,
     Gt,
+    Ge,
     Eq,
     Ne,
+    BitAnd,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

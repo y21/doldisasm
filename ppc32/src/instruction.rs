@@ -29,9 +29,23 @@ impl Gpr {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum XerRegister {
+    So,
+    Ov,
+    Ca,
+}
+
+impl XerRegister {
+    pub const ALL: &[Self] = &[Self::So, Self::Ov, Self::Ca];
+}
+
+pub type MicroSpr = Spr<XerRegister>;
+pub type MacroSpr = Spr<()>;
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// A special purpose register.
-pub enum Spr {
-    Xer, // TODO: split this up into smaller things like OV etc?
+pub enum Spr<Xer> {
+    Xer(Xer),
     Lr,
     Ctr,
     Msr,
@@ -40,10 +54,12 @@ pub enum Spr {
     Other(u16),
 }
 
-impl Debug for Spr {
+impl Debug for MicroSpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Spr::Xer => write!(f, "XER"),
+            Spr::Xer(XerRegister::So) => write!(f, "XER[SO]"),
+            Spr::Xer(XerRegister::Ov) => write!(f, "XER[OV]"),
+            Spr::Xer(XerRegister::Ca) => write!(f, "XER[CA]"),
             Spr::Lr => write!(f, "LR"),
             Spr::Ctr => write!(f, "CTR"),
             Spr::Msr => write!(f, "MSR"),
@@ -53,10 +69,23 @@ impl Debug for Spr {
     }
 }
 
-impl Spr {
+impl Debug for MacroSpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Spr::Xer(()) => write!(f, "XER"),
+            Spr::Lr => write!(f, "LR"),
+            Spr::Ctr => write!(f, "CTR"),
+            Spr::Msr => write!(f, "MSR"),
+            Spr::Pc => write!(f, "PC"),
+            Spr::Other(num) => write!(f, "SPR({})", num),
+        }
+    }
+}
+
+impl MacroSpr {
     pub fn from_word(word: Word) -> Self {
         match word.u16::<11, 15>() | (word.u16::<16, 20>() << 5) {
-            1 => Spr::Xer,
+            1 => Spr::Xer(()),
             8 => Spr::Lr,
             9 => Spr::Ctr,
             other => Spr::Other(other),
@@ -68,7 +97,7 @@ impl Spr {
 pub enum Register {
     Gpr(Gpr),
     Cr(Crf, Crb),
-    Spr(Spr),
+    Spr(MicroSpr),
 }
 impl Debug for Register {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -340,12 +369,31 @@ define_instructions! {
             rc: bool = |word| word.bit::<31>() != 0
         }
     },
+    Subfic {
+        op: 0b001000,
+        {
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            simm: i16 = |word| word.i16::<16, 31>()
+        }
+    },
+    Subfe {
+        op: EXTENDED_OPCODE,
+        xform_op: 0b0010001000,
+        {
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source_a: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            source_b: Gpr = |word| Gpr(word.u8::<16, 20>()),
+            oe: bool = |word| word.bit::<21>() != 0,
+            rc: bool = |word| word.bit::<31>() != 0
+        }
+    },
     Mfspr {
         op: EXTENDED_OPCODE,
         xform_op: 0b101010011,
         {
             dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
-            spr: Spr = Spr::from_word
+            spr: MacroSpr = Spr::from_word
         }
     },
     Mtspr {
@@ -353,7 +401,7 @@ define_instructions! {
         xform_op: 0b111010011,
         {
             source: Gpr = |word| Gpr(word.u8::<6, 10>()),
-            spr: Spr = Spr::from_word
+            spr: MacroSpr = Spr::from_word
         }
     },
     Mfmsr {
@@ -387,6 +435,14 @@ define_instructions! {
             source1: Gpr = |word| Gpr(word.u8::<6, 10>()),
             source2: Gpr = |word| Gpr(word.u8::<16, 20>()),
             dest: Gpr = |word| Gpr(word.u8::<11, 15>())
+        }
+    },
+    Andi {
+        op: 0b011100,
+        {
+            source: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            dest: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            simm: i16 = |word| word.i16::<16, 31>()
         }
     },
     Stw {
@@ -518,8 +574,8 @@ define_instructions! {
 pub trait RegisterVisitor {
     fn read_gpr(&mut self, _gpr: Gpr) {}
     fn write_gpr(&mut self, _gpr: Gpr) {}
-    fn read_spr(&mut self, _spr: Spr) {}
-    fn write_spr(&mut self, _spr: Spr) {}
+    fn read_spr(&mut self, _spr: MicroSpr) {}
+    fn write_spr(&mut self, _spr: MicroSpr) {}
     fn read_crf(&mut self, _crf: Crf) {}
     fn write_crf(&mut self, _crf: Crf) {}
     fn read_crb(&mut self, _crf: Crf, _crb: Crb) {}
@@ -647,15 +703,58 @@ impl Instruction {
                     visitor.write_crf(Crf(0));
                 }
             },
+            Instruction::Subfic { dest, source, simm: _ } => {
+                visitor.read_gpr(source);
+                visitor.effect();
+                visitor.write_gpr(dest);
+                visitor.write_spr(Spr::Xer(XerRegister::Ca));
+            }
+            Instruction::Subfe { dest, source_a, source_b, oe, rc } => {
+                visitor.read_gpr(source_a);
+                visitor.read_gpr(source_b);
+                visitor.read_spr(Spr::Xer(XerRegister::Ca));
+                visitor.effect();
+                visitor.write_gpr(dest);
+                if rc {
+                    visitor.write_crf(Crf(0));
+                }
+                visitor.write_spr(Spr::Xer(XerRegister::Ca));
+                if oe {
+                    visitor.write_spr(Spr::Xer(XerRegister::So));
+                    visitor.write_spr(Spr::Xer(XerRegister::Ov));
+                }
+            }
             Instruction::Mfspr { dest, spr } => {
-                visitor.read_spr(spr);
+                match spr {
+                    Spr::Xer(()) => {
+                        visitor.read_spr(Spr::Xer(XerRegister::So));
+                        visitor.read_spr(Spr::Xer(XerRegister::Ca));
+                        visitor.read_spr(Spr::Xer(XerRegister::Ov));
+                    },
+                    Spr::Lr => visitor.read_spr(Spr::Lr),
+                    Spr::Ctr => visitor.read_spr(Spr::Ctr),
+                    Spr::Msr => visitor.read_spr(Spr::Msr),
+                    Spr::Pc => visitor.read_spr(Spr::Pc),
+                    Spr::Other(other) => visitor.read_spr(Spr::Other(other)),
+                }
                 visitor.effect();
                 visitor.write_gpr(dest);
             },
             Instruction::Mtspr { source, spr } => {
                 visitor.read_gpr(source);
                 visitor.effect();
-                visitor.write_spr(spr);
+                match spr {
+                    Spr::Xer(()) => {
+                        visitor.write_spr(Spr::Xer(XerRegister::So));
+                        visitor.write_spr(Spr::Xer(XerRegister::Ca));
+                        visitor.write_spr(Spr::Xer(XerRegister::Ov));
+                    },
+                    Spr::Lr => visitor.write_spr(Spr::Lr),
+                    Spr::Ctr => visitor.write_spr(Spr::Ctr),
+                    Spr::Msr => visitor.write_spr(Spr::Msr),
+                    Spr::Pc => visitor.write_spr(Spr::Pc),
+                    Spr::Other(other) => visitor.write_spr(Spr::Other(other)),
+                }
             },
             Instruction::Mfmsr { dest } => {
                 visitor.read_spr(Spr::Msr);
@@ -682,6 +781,11 @@ impl Instruction {
                 visitor.effect();
                 visitor.write_gpr(dest);
             },
+            Instruction::Andi { source, dest, simm: _ } => {
+                visitor.read_gpr(source);
+                visitor.effect();
+                visitor.write_gpr(dest);
+            }
             Instruction::Stw { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
                 visitor.read_gpr(dest);
@@ -744,7 +848,8 @@ impl Instruction {
                 visitor.effect();
                 visitor.write_gpr(dest);
                 if oe {
-                    visitor.write_spr(Spr::Xer);
+                    visitor.write_spr(Spr::Xer(XerRegister::So));
+                    visitor.write_spr(Spr::Xer(XerRegister::Ov));
                 }
                 if rc {
                     visitor.write_crf(Crf(0));
