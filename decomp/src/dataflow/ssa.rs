@@ -181,6 +181,8 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
     type BlockItem = Instruction;
     type RecordingState = RecordingState;
 
+    const REVISIT_BLOCKS: bool = false;
+
     fn pre_block_record(
         &self,
         record_state: &mut Self::RecordingState,

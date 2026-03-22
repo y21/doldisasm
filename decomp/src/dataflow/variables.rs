@@ -222,6 +222,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
         inst_addr: u32,
         state: &mut BlockState,
     ) -> ControlFlow<()> {
+        tracing::debug!(?inst);
         match inst {
             Instruction::Stwu {
                 source,
@@ -231,6 +232,29 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 let source = self.variables.id_by_gpr(source, state);
                 cx.analysis.apply_effect(state, idx, &inst);
                 self.variables.mk_gpr_var(dest, &state, source);
+                ControlFlow::Continue(())
+            }
+            Instruction::Cmp {
+                source_a,
+                source_b,
+                crf,
+                l,
+            } => {
+                assert!(!l);
+                let source_a = self
+                    .variables
+                    .get_vis(self.variables.id_by_gpr(source_a, &state));
+                let source_b = self
+                    .variables
+                    .get_vis(self.variables.id_by_gpr(source_b, &state));
+                cx.analysis.apply_effect(state, idx, &inst);
+                for (crb, vis) in cr_bits_variables(&state, self.def_use_map, crf) {
+                    self.variables.mk_root_reg_var(
+                        Register::Cr(crf, crb),
+                        state.registers.sprs.cr(crf, crb).generation,
+                        source_a & source_b & vis,
+                    );
+                }
                 ControlFlow::Continue(())
             }
             Instruction::Cmpi {

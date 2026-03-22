@@ -1,6 +1,6 @@
 use std::{
     array,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
     ops::ControlFlow,
@@ -11,14 +11,26 @@ pub fn for_each_transitive_successor<B, D: Dataflow>(
     inst: D::Idx,
     fun: &mut impl FnMut(D::Idx) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
-    fun(inst)?;
-    let (_, edges) = succs.range(inst..).next().unwrap();
-    for edge in edges {
-        if let SuccessorTarget::Id(next) = *edge {
-            for_each_transitive_successor(succs, next, fun)?;
+    fn inner<B, D: Dataflow>(
+        seen: &mut HashSet<D::Idx>,
+        succs: &Successors<D>,
+        inst: D::Idx,
+        fun: &mut impl FnMut(D::Idx) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        if !seen.insert(inst) {
+            return ControlFlow::Continue(());
         }
+
+        fun(inst)?;
+        let (_, edges) = succs.range(inst..).next().unwrap();
+        for edge in edges {
+            if let SuccessorTarget::Id(next) = *edge {
+                inner(seen, succs, next, fun)?;
+            }
+        }
+        ControlFlow::Continue(())
     }
-    ControlFlow::Continue(())
+    inner(&mut HashSet::new(), succs, inst, fun)
 }
 
 #[derive(PartialEq, Eq)]
@@ -89,6 +101,8 @@ pub trait Dataflow: Sized {
     type BlockItem: Copy;
     type RecordingState: Default;
 
+    const REVISIT_BLOCKS: bool = true;
+
     fn initial_idx() -> Self::Idx;
     fn iter_block(&self, block: Self::Idx) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
     fn iter(&self) -> impl Iterator<Item = (Self::Idx, Self::BlockItem)>;
@@ -149,8 +163,10 @@ where
                             let state_changed = &succ_state_joined != succ_state;
 
                             if state_changed {
-                                queue.push(succ);
                                 entry_states.insert(succ, succ_state_joined);
+                                if D::REVISIT_BLOCKS {
+                                    queue.push(succ);
+                                }
                             }
                         } else {
                             // First time visiting this successor.

@@ -568,6 +568,14 @@ define_instructions! {
             oe: bool = |word| word.bit::<21>() != 0,
             rc: bool = |word| word.bit::<31>() != 0
         }
+    },
+    AddicRc {
+        op: 0b001101,
+        {
+            dest: Gpr = |word| Gpr(word.u8::<6, 10>()),
+            source: Gpr = |word| Gpr(word.u8::<11, 15>()),
+            simm: i16 = |word| word.i16::<16, 31>()
+        }
     }
 }
 
@@ -641,6 +649,13 @@ impl Instruction {
                 visitor.effect();
                 visitor.write_gpr(dest);
             },
+            Instruction::AddicRc { dest, source, simm: _ } => {
+                visitor.read_gpr(source);
+                visitor.effect();
+                visitor.write_gpr(dest);
+                visitor.write_spr(Spr::Xer(XerRegister::Ca));
+                visitor.write_crf(Crf(0));
+            }
             Instruction::Ori { source, dest, imm: _ } => {
                 visitor.read_gpr(source);
                 visitor.effect();
