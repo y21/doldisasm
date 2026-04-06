@@ -5,6 +5,14 @@ pub struct Expr {
     pub kind: ExprKind,
 }
 
+impl Expr {
+    pub fn var(id: VarId) -> Self {
+        Self {
+            kind: ExprKind::Var(id),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
     Var(VarId),

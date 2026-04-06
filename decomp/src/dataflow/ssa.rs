@@ -118,26 +118,27 @@ pub struct LocalRegisterState {
 impl Join<Generation> for LocalRegisterState {
     fn join(&self, other: &Self, recording_state: &mut Generation) -> Self {
         if self.generation == other.generation {
+            assert_eq!(self.generation, *recording_state);
             Self {
                 generation: self.generation,
                 highest_generation: *recording_state,
                 phi_origins: None, // no phi necessary, they are the same variable
             }
         } else {
-            *recording_state = recording_state.next();
             Self {
-                generation: *recording_state,
+                generation: self.generation, // SUBTLE: order matters here, we need to use self (the generation at the block)
+                highest_generation: self.highest_generation,
                 phi_origins: Some([self.generation, other.generation]),
-                highest_generation: *recording_state,
             }
         }
     }
 }
 
 impl LocalRegisterState {
-    pub fn next_generation(&mut self) {
+    pub fn next_generation(&mut self) -> Generation {
         self.highest_generation = self.highest_generation.next();
         self.generation = self.highest_generation;
+        self.generation
     }
 }
 
@@ -234,21 +235,24 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
         }
         impl<'a, 'b> RegisterVisitor for Vis<'a, 'b> {
             fn write_crb(&mut self, crf: Crf, crb: Crb) {
-                self.state.registers.sprs.cr_mut(crf, crb).next_generation();
+                let generation = self.state.registers.sprs.cr_mut(crf, crb).next_generation();
+                tracing::debug!(?crf, ?crb, ?generation);
             }
             fn write_crf(&mut self, crf: Crf) {
                 let CrFieldState { lt, gt, eq, so } =
                     &mut self.state.registers.sprs.cr[crf.0 as usize];
-                lt.next_generation();
-                gt.next_generation();
-                eq.next_generation();
-                so.next_generation();
+                let lt = lt.next_generation();
+                let gt = gt.next_generation();
+                let eq = eq.next_generation();
+                let so = so.next_generation();
+                tracing::debug!(?crf, ?lt, ?gt, ?eq, ?so);
             }
             fn write_gpr(&mut self, gpr: Gpr) {
-                self.state.registers.gprs[gpr.0 as usize].next_generation();
+                let generation = self.state.registers.gprs[gpr.0 as usize].next_generation();
+                tracing::debug!(?gpr, ?generation);
             }
             fn write_spr(&mut self, spr: MicroSpr) {
-                match spr {
+                let generation = match spr {
                     Spr::Xer(XerRegister::So) => self.state.registers.sprs.xer.so.next_generation(),
                     Spr::Xer(XerRegister::Ov) => self.state.registers.sprs.xer.ov.next_generation(),
                     Spr::Xer(XerRegister::Ca) => self.state.registers.sprs.xer.ca.next_generation(),
@@ -257,7 +261,8 @@ impl<'a> Dataflow for LocalGenerationAnalysis<'a> {
                     Spr::Msr => self.state.registers.sprs.msr.next_generation(),
                     Spr::Pc => todo!(),
                     Spr::Other(_) => todo!(),
-                }
+                };
+                tracing::debug!(?spr, ?generation);
             }
         }
         data.visit_registers(Vis { state });

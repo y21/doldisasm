@@ -9,13 +9,16 @@ use ppc32::{
 use typed_index_collections::TiVec;
 
 use crate::{
-    ast::stmt::{VarId, Variable, VariableFlags, VariableVisibility},
+    ast::stmt::{Stmt, VarId, Variable, VariableFlags, VariableVisibility},
     dataflow::{
         InstId,
         core::{Dataflow, Results, Successors},
         ssa::{BlockState, DefUseMap, Generation, LocalGenerationAnalysis, RegisterWithGeneration},
     },
-    visit::{self, JoinResult, PhiLocal, SuccessorsVisitor, VisitPathResult, VisitorCx},
+    visit::{
+        self, JoinResult, PhiLocal, SuccessorsVisitor, VisitPathResult, VisitStack, VisitorCx,
+        VisitorStaticData,
+    },
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -214,7 +217,7 @@ struct CollectVariables<'a> {
 impl SuccessorsVisitor for CollectVariables<'_> {
     fn visit_instruction(
         &mut self,
-        cx: &mut VisitorCx<'_, '_, '_>,
+        cx: &mut VisitorCx<'_, '_>,
         inst: Instruction,
         idx: InstId,
         absolute_idx: InstId,
@@ -230,7 +233,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 imm: _,
             } => {
                 let source = self.variables.id_by_gpr(source, state);
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 self.variables.mk_gpr_var(dest, &state, source);
                 ControlFlow::Continue(())
             }
@@ -247,7 +250,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 let source_b = self
                     .variables
                     .get_vis(self.variables.id_by_gpr(source_b, &state));
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 for (crb, vis) in cr_bits_variables(&state, self.def_use_map, crf) {
                     self.variables.mk_root_reg_var(
                         Register::Cr(crf, crb),
@@ -265,7 +268,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 let source_vis = self
                     .variables
                     .get_vis(self.variables.id_by_gpr(source, &state));
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 for (crb, vis) in cr_bits_variables(&state, self.def_use_map, crf) {
                     self.variables.mk_root_reg_var(
                         Register::Cr(crf, crb),
@@ -282,7 +285,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 rc,
             } => {
                 let source = self.variables.id_by_gpr(source, &state);
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 self.variables.mk_gpr_var(dest, &state, source);
 
                 if rc {
@@ -295,17 +298,31 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                     let spr = self
                         .variables
                         .id_by_reg(Register::Spr(Spr::Lr), state.registers.sprs.lr.generation);
-                    cx.analysis.apply_effect(state, idx, &inst);
+                    cx.analysis().apply_effect(state, idx, &inst);
                     self.variables.mk_gpr_var(dest, &state, spr);
                 } else {
                     todo!()
                 }
                 ControlFlow::Continue(())
             }
+            Instruction::AddicRc {
+                dest,
+                source,
+                simm: _,
+            } => {
+                let source = self.variables.id_by_gpr(source, state);
+                cx.analysis().apply_effect(state, idx, &inst);
+                self.variables.mk_gpr_var(dest, state, source);
+
+                mk_cr_variables(state, self);
+                mk_xer_variables(state, &[XerRegister::Ca], self);
+
+                ControlFlow::Continue(())
+            }
             Instruction::Addi { dest, source, imm } => {
                 if source == Gpr::ZERO {
                     // addi with r0 is just a load immediate
-                    cx.analysis.apply_effect(state, idx, &inst);
+                    cx.analysis().apply_effect(state, idx, &inst);
                     self.variables
                         .mk_root_gpr_var(dest, &state, VariableVisibility::Visible);
                 } else {
@@ -319,7 +336,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                     } else {
                         self.variables.id_by_gpr(source, &state)
                     };
-                    cx.analysis.apply_effect(state, idx, &inst);
+                    cx.analysis().apply_effect(state, idx, &inst);
                     self.variables.mk_gpr_var(dest, &state, source);
                 }
                 ControlFlow::Continue(())
@@ -330,7 +347,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 simm: _,
             } => {
                 let source = self.variables.id_by_gpr(source, state);
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 self.variables.mk_gpr_var(dest, state, source);
                 // TODO: we could perhaps check if this generation is used anywhere and make it hidden
                 self.variables.mk_reg_var(
@@ -350,7 +367,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 let source_a = self.variables.id_by_gpr(source_a, state);
                 let source_b = self.variables.id_by_gpr(source_b, state);
                 let dest_vis = self.variables.get_vis(source_a) & self.variables.get_vis(source_b);
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 let dest = self.variables.mk_root_gpr_var(dest, state, dest_vis);
                 if rc {
                     mk_cr_variables(state, self);
@@ -366,20 +383,45 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 }
                 ControlFlow::Continue(())
             }
+            Instruction::Subf {
+                dest,
+                source_b,
+                source_a,
+                oe,
+                rc,
+            } => {
+                let source_a = self
+                    .variables
+                    .get_vis(self.variables.id_by_gpr(source_a, state));
+                let source_b = self
+                    .variables
+                    .get_vis(self.variables.id_by_gpr(source_b, state));
+                cx.analysis().apply_effect(state, idx, &inst);
+                self.variables
+                    .mk_root_gpr_var(dest, state, source_a & source_b);
+
+                if rc {
+                    mk_cr_variables(state, self);
+                }
+                if oe {
+                    mk_xer_variables(state, &[XerRegister::Ov, XerRegister::So], self);
+                }
+                ControlFlow::Continue(())
+            }
             Instruction::Andi {
                 source,
                 dest,
                 simm: _,
             } => {
                 let source = self.variables.id_by_gpr(source, state);
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 self.variables.mk_gpr_var(dest, state, source);
                 mk_cr_variables(state, self);
                 ControlFlow::Continue(())
             }
             Instruction::Stw { source, dest, imm } => {
                 let source = self.variables.id_by_gpr(source, &state);
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 // We only create variables that are stack-relative.
                 // TODO!: normalize address!!!
                 if dest == Gpr::STACK_POINTER {
@@ -390,7 +432,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
             Instruction::Branch { target, mode, link } => {
                 let target = compute_branch_target(inst_addr, mode, target);
                 // TODO: anything to do with args???
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 if link {
                     // TODO: check if r3 is used with this generation and only then create the variable
                     self.variables.mk_root_gpr_var(
@@ -400,9 +442,8 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                     );
                     ControlFlow::Continue(())
                 } else {
-                    let idx = InstId((target - cx.analysis.fn_address) / 4);
-                    let VisitPathResult { state: _ } =
-                        visit::visit_path(self, cx, Some(state), idx, end_idx);
+                    let idx = InstId((target - cx.analysis().fn_address) / 4);
+                    let _ = visit::visit_path(self, cx, Some(state), idx, end_idx);
                     ControlFlow::Break(())
                 }
             }
@@ -416,11 +457,11 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 assert!(!link);
 
                 let true_idx = InstId(
-                    (compute_branch_target(inst_addr, mode, target) - cx.analysis.fn_address) / 4,
+                    (compute_branch_target(inst_addr, mode, target) - cx.analysis().fn_address) / 4,
                 );
                 let false_idx = InstId(absolute_idx.0 + 1);
 
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
 
                 let JoinResult {
                     true_res: _,
@@ -457,8 +498,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 }
 
                 if let Some(common_merge_inst) = common_merge_inst {
-                    let VisitPathResult { state: _ } =
-                        visit::visit_path(self, cx, Some(state), common_merge_inst, end_idx);
+                    let _ = visit::visit_path(self, cx, Some(state), common_merge_inst, end_idx);
                 }
                 ControlFlow::Break(())
             }
@@ -466,10 +506,10 @@ impl SuccessorsVisitor for CollectVariables<'_> {
                 // TODO: normalize address
                 if source == Gpr::STACK_POINTER {
                     let mem_var = self.variables.id_by_stack_mem(imm.0);
-                    cx.analysis.apply_effect(state, idx, &inst);
+                    cx.analysis().apply_effect(state, idx, &inst);
                     self.variables.mk_gpr_var(dest, &state, mem_var);
                 } else {
-                    cx.analysis.apply_effect(state, idx, &inst);
+                    cx.analysis().apply_effect(state, idx, &inst);
                     self.variables
                         .mk_root_gpr_var(dest, &state, VariableVisibility::Visible);
                 }
@@ -478,7 +518,7 @@ impl SuccessorsVisitor for CollectVariables<'_> {
             Instruction::Mtspr { source, spr } => {
                 if let Spr::Lr = spr {
                     let source = self.variables.id_by_gpr(source, &state);
-                    cx.analysis.apply_effect(state, idx, &inst);
+                    cx.analysis().apply_effect(state, idx, &inst);
                     self.variables.mk_reg_var(
                         Register::Spr(Spr::Lr),
                         state.registers.sprs.lr.generation,
@@ -492,11 +532,11 @@ impl SuccessorsVisitor for CollectVariables<'_> {
             Instruction::Bclr { bo, bi: _, link } => {
                 assert!(!link);
 
-                cx.analysis.apply_effect(state, idx, &inst);
+                cx.analysis().apply_effect(state, idx, &inst);
                 if bo == BranchOptions::BranchAlways {
                     ControlFlow::Break(())
                 } else {
-                    visit::visit_path(self, cx, Some(state), absolute_idx + 1, end_idx);
+                    let _ = visit::visit_path(self, cx, Some(state), absolute_idx + 1, end_idx);
                     ControlFlow::Break(())
                 }
             }
@@ -547,12 +587,19 @@ pub fn infer_variables<'a>(
         variables: &mut variables,
         def_use_map,
     };
-    let mut cx = VisitorCx {
+    let data = VisitorStaticData {
         analysis,
         results: local_generations,
         succs,
     };
-    visit::visit_path(&mut vars, &mut cx, None, InstId(0), None);
+
+    let start_idx = InstId(0);
+    let mut cx = VisitorCx {
+        data: &data,
+        id: start_idx,
+        parent: None,
+    };
+    let _ = visit::visit_path(&mut vars, &mut cx, None, start_idx, None);
 
     variables
 }

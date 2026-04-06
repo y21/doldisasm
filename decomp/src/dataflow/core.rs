@@ -159,7 +159,9 @@ where
                 for &succ in succs {
                     if let SuccessorTarget::Id(succ) = succ {
                         if let Some(succ_state) = entry_states.get(&succ) {
-                            let succ_state_joined = state.join(succ_state, &mut record_state);
+                            // NOTE: join() argument order matters here -- the state of the successor block needs to come first
+                            // because we need to take the generation of the block's registers
+                            let succ_state_joined = succ_state.join(&state, &mut record_state);
                             let state_changed = &succ_state_joined != succ_state;
 
                             if state_changed {
