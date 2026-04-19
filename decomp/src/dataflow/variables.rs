@@ -9,16 +9,13 @@ use ppc32::{
 use typed_index_collections::TiVec;
 
 use crate::{
-    ast::stmt::{Stmt, VarId, Variable, VariableFlags, VariableVisibility},
+    ast::stmt::{VarId, Variable, VariableFlags, VariableVisibility},
     dataflow::{
         InstId,
         core::{Dataflow, Results, Successors},
         ssa::{BlockState, DefUseMap, Generation, LocalGenerationAnalysis, RegisterWithGeneration},
     },
-    visit::{
-        self, JoinResult, PhiLocal, SuccessorsVisitor, VisitPathResult, VisitStack, VisitorCx,
-        VisitorStaticData,
-    },
+    visit::{self, JoinResult, PhiLocal, SuccessorsVisitor, VisitorCx, VisitorStaticData},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

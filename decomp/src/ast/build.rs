@@ -19,6 +19,7 @@ use crate::{
     dataflow::{
         InstId, InstructionsDeref,
         core::{Dataflow, Results, Successors, for_each_transitive_successor},
+        loops::{LoopId, LoopMap},
         ssa::{BlockState, DefUseMap, Generation, LocalGenerationAnalysis},
         variables::{Variables, cr_bits_variables, xer_variables},
     },
@@ -33,6 +34,7 @@ pub struct AstBuildParams<'a, 'b> {
     pub def_use_map: &'a DefUseMap,
     pub variables: &'a Variables,
     pub succs: &'a Successors<LocalGenerationAnalysis<'b>>,
+    pub loops: &'a LoopMap,
 }
 
 struct BuildPathResult {
@@ -148,8 +150,10 @@ fn build_path(
     analysis: &LocalGenerationAnalysis<'_>,
     variables: &Variables,
     def_use_map: &DefUseMap,
+    loops: &LoopMap,
     succs: &Successors<LocalGenerationAnalysis<'_>>,
     prev_state: Option<&BlockState>,
+    current_loop: Option<LoopId>,
 ) -> BuildPathResult {
     if let Some(end_index) = end_index
         && start_index == end_index
@@ -160,6 +164,61 @@ fn build_path(
             state: prev_state.unwrap().clone(),
         };
     }
+
+    if let Some((id, loop_)) = loops.find(start_index)
+        && Some(id) != current_loop
+    {
+        // This is the start of a loop.
+        let loop_result = build_path(
+            instructions,
+            start_index,
+            loop_.common_merge_inst,
+            local_generations,
+            analysis,
+            variables,
+            def_use_map,
+            loops,
+            succs,
+            prev_state,
+            Some(id),
+        );
+
+        if let Some(common_merge_inst) = loop_.common_merge_inst {
+            let mut result = build_path(
+                instructions,
+                common_merge_inst,
+                end_index,
+                local_generations,
+                analysis,
+                variables,
+                def_use_map,
+                loops,
+                succs,
+                prev_state,
+                current_loop,
+            );
+            result.stmts.insert(
+                0,
+                Stmt {
+                    kind: StmtKind::While {
+                        condition: Expr {
+                            kind: ExprKind::Immediate16(1),
+                        },
+                        body: loop_result.stmts,
+                    },
+                },
+            );
+
+            return BuildPathResult {
+                stmts: result.stmts,
+                has_return_value: loop_result.has_return_value || result.has_return_value,
+                state: result.state,
+            };
+        } else {
+            return loop_result;
+        }
+    }
+
     let mut state = local_generations.get(start_index).map_or_else(
         || {
             assert_eq!(start_index, InstId(0));
@@ -182,8 +241,10 @@ fn build_path(
                 analysis,
                 variables,
                 def_use_map,
+                loops,
                 succs,
                 Some(&state),
+                current_loop,
             );
 
             stmts.extend(next_result.stmts);
@@ -672,8 +733,10 @@ fn build_path(
                         analysis,
                         variables,
                         def_use_map,
+                        loops,
                         succs,
                         Some(&state),
+                        current_loop,
                     );
                     stmts.extend(path_result.stmts);
                     has_return_value |= path_result.has_return_value;
@@ -693,6 +756,23 @@ fn build_path(
                     (compute_branch_target(inst_addr.0, mode, target) - analysis.fn_address) / 4,
                 );
                 let false_idx = InstId(absolute_index.0 + 1);
+
+                let (true_loop_target, false_loop_target, true_is_break, false_is_break) =
+                    if let Some(loop_id) = current_loop
+                        && let current_loop = loops.get(loop_id)
+                        && let true_is_start = current_loop.start == true_idx
+                        && let false_is_start = current_loop.start == false_idx
+                        && (true_is_start || false_is_start)
+                    {
+                        (
+                            true_is_start.then_some(loop_id),
+                            false_is_start.then_some(loop_id),
+                            Some(true_idx) == current_loop.common_merge_inst,
+                            Some(false_idx) == current_loop.common_merge_inst,
+                        )
+                    } else {
+                        (None, None, false, false)
+                    };
 
                 // TODO: maybe compute this one for each entry in successors and then just use the map here?
                 let mut true_transitive_successors = HashSet::new();
@@ -722,32 +802,72 @@ fn build_path(
                     stmts: then_stmts,
                     has_return_value: then_has_return_value,
                     state: then_state,
-                } = build_path(
-                    instructions,
-                    true_idx,
-                    common_merge_inst,
-                    local_generations,
-                    analysis,
-                    variables,
-                    def_use_map,
-                    succs,
-                    Some(&state),
-                );
+                } = if true_loop_target.is_some() {
+                    BuildPathResult {
+                        stmts: vec![Stmt {
+                            kind: StmtKind::Continue,
+                        }],
+                        has_return_value,
+                        state: state.clone(),
+                    }
+                } else if true_is_break {
+                    BuildPathResult {
+                        stmts: vec![Stmt {
+                            kind: StmtKind::Break,
+                        }],
+                        has_return_value,
+                        state: state.clone(),
+                    }
+                } else {
+                    build_path(
+                        instructions,
+                        true_idx,
+                        common_merge_inst,
+                        local_generations,
+                        analysis,
+                        variables,
+                        def_use_map,
+                        loops,
+                        succs,
+                        Some(&state),
+                        current_loop,
+                    )
+                };
                 let BuildPathResult {
                     stmts: else_stmts,
                     has_return_value: else_has_return_value,
                     state: else_state,
-                } = build_path(
-                    instructions,
-                    false_idx,
-                    common_merge_inst,
-                    local_generations,
-                    analysis,
-                    variables,
-                    def_use_map,
-                    succs,
-                    Some(&state),
-                );
+                } = if false_loop_target.is_some() {
+                    BuildPathResult {
+                        stmts: vec![Stmt {
+                            kind: StmtKind::Continue,
+                        }],
+                        has_return_value,
+                        state: state.clone(),
+                    }
+                } else if false_is_break {
+                    BuildPathResult {
+                        stmts: vec![Stmt {
+                            kind: StmtKind::Break,
+                        }],
+                        has_return_value,
+                        state: state.clone(),
+                    }
+                } else {
+                    build_path(
+                        instructions,
+                        false_idx,
+                        common_merge_inst,
+                        local_generations,
+                        analysis,
+                        variables,
+                        def_use_map,
+                        loops,
+                        succs,
+                        Some(&state),
+                        current_loop,
+                    )
+                };
 
                 has_return_value |= then_has_return_value | else_has_return_value;
 
@@ -769,6 +889,7 @@ fn build_path(
                     BranchOptions::BranchAlways => todo!(),
                 }
 
+                has_return_value |= then_has_return_value | else_has_return_value;
                 stmts.push(Stmt {
                     kind: StmtKind::If {
                         condition,
@@ -835,8 +956,10 @@ fn build_path(
                         analysis,
                         variables,
                         def_use_map,
+                        loops,
                         succs,
                         Some(&state),
+                        current_loop,
                     );
                     stmts.extend(next_path.stmts);
                     has_return_value |= next_path.has_return_value;
@@ -932,8 +1055,10 @@ fn build_path(
                         analysis,
                         variables,
                         def_use_map,
+                        loops,
                         succs,
                         Some(&state),
+                        current_loop,
                     );
                     stmts.extend(next_path.stmts);
                     has_return_value |= next_path.has_return_value;
@@ -960,6 +1085,7 @@ pub fn build(
         fn_address,
         variables,
         succs,
+        loops,
     }: AstBuildParams,
 ) -> Ast {
     // Infer parameters
@@ -997,7 +1123,9 @@ pub fn build(
         analysis,
         variables,
         def_use_map,
+        loops,
         succs,
+        None,
         None,
     );
 

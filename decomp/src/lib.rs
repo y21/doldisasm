@@ -7,6 +7,7 @@ use crate::{
     dataflow::{
         Instructions,
         core::DataflowArgs,
+        loops::find_loops,
         ssa::{LocalGenerationAnalysis, compute_preds_and_succs, def_use_map},
         variables::infer_variables,
     },
@@ -48,6 +49,8 @@ pub fn decompile_into_ast_writer(
 
     let variables = infer_variables(&local_generations, &analysis, &def_use_map, &succs);
 
+    let loops = find_loops(&preds, &succs);
+
     let ast = ast::build(AstBuildParams {
         fn_address,
         instructions: &insts,
@@ -56,6 +59,7 @@ pub fn decompile_into_ast_writer(
         def_use_map: &def_use_map,
         variables: &variables,
         succs: &succs,
+        loops: &loops,
     });
 
     ast::write::write_ast(

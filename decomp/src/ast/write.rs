@@ -172,6 +172,24 @@ fn write_stmt(stmt: &Stmt, cx: &WriteContext<'_>, writer: &mut dyn Writer) {
                 writer.write_str("}");
             }
         }
+        StmtKind::While {
+            ref condition,
+            ref body,
+        } => {
+            writer.write_str("while (");
+            write_expr(&condition, cx, writer);
+            writer.write_str(") {");
+            writer.with_scope(&mut |writer| {
+                for stmt in body.iter() {
+                    writer.next_line();
+                    write_stmt(stmt, cx, writer);
+                }
+            });
+            writer.next_line();
+            writer.write_str("}");
+        }
+        StmtKind::Continue => writer.write_str("continue;"),
+        StmtKind::Break => writer.write_str("break;"),
     }
 }
 

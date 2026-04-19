@@ -21,6 +21,12 @@ pub enum StmtKind {
         then_stmts: Vec<Stmt>,
         else_stmts: Vec<Stmt>,
     },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
+    Continue,
+    Break,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

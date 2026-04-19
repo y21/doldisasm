@@ -6,6 +6,7 @@ use typed_index_collections::TiVec;
 use crate::decoder::Address;
 
 pub mod core;
+pub mod loops;
 pub mod register_state;
 pub mod ssa;
 pub mod variables;
