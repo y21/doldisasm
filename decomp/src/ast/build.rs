@@ -142,6 +142,44 @@ fn build_xer_assignments(
     }
 }
 
+fn append_phi_merge_assignments(
+    cur_state: &BlockState,
+    next_state: &BlockState,
+    variables: &Variables,
+    stmts: &mut Vec<Stmt>,
+) {
+    cur_state
+        .registers
+        .register_iter()
+        .zip(next_state.registers.register_iter())
+        .for_each(|((cur_reg, cur_state), (next_reg, next_state))| {
+            assert_eq!(cur_reg, next_reg);
+
+            if cur_state.generation != next_state.generation
+                // The next state variable may not exist, e.g. imagine a register is at gen 0 when entering the loop
+                // (hasn't been assigned a value), and it writes a value to it in the loop body:
+                // in that case the variable does not exist, but there also isn't a need
+                // to insert an assignment to it anyway since we won't read its value.
+                && let Some(next_var) =
+                    variables.optional_id_by_reg(next_reg, next_state.generation)
+            {
+                let next_vis = variables.get_vis(next_var);
+
+                if next_vis == VariableVisibility::Visible
+                    && let Some(cur_var) =
+                        variables.optional_id_by_reg(cur_reg, cur_state.generation)
+                {
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            dest: Expr::var(next_var),
+                            value: Expr::var(cur_var),
+                        },
+                    });
+                }
+            }
+        });
+}
+
 fn build_path(
     instructions: &InstructionsDeref,
     start_index: InstId,
@@ -803,18 +841,35 @@ fn build_path(
                     has_return_value: then_has_return_value,
                     state: then_state,
                 } = if true_loop_target.is_some() {
+                    let mut stmts = Vec::with_capacity(2);
+                    append_phi_merge_assignments(
+                        &state,
+                        local_generations.get(true_idx).unwrap(),
+                        variables,
+                        &mut stmts,
+                    );
+                    stmts.push(Stmt {
+                        kind: StmtKind::Continue,
+                    });
+
                     BuildPathResult {
-                        stmts: vec![Stmt {
-                            kind: StmtKind::Continue,
-                        }],
+                        stmts,
                         has_return_value,
                         state: state.clone(),
                     }
                 } else if true_is_break {
+                    let mut stmts = Vec::with_capacity(2);
+                    append_phi_merge_assignments(
+                        &state,
+                        local_generations.get(true_idx).unwrap(),
+                        variables,
+                        &mut stmts,
+                    );
+                    stmts.push(Stmt {
+                        kind: StmtKind::Break,
+                    });
                     BuildPathResult {
-                        stmts: vec![Stmt {
-                            kind: StmtKind::Break,
-                        }],
+                        stmts,
                         has_return_value,
                         state: state.clone(),
                     }
@@ -838,18 +893,34 @@ fn build_path(
                     has_return_value: else_has_return_value,
                     state: else_state,
                 } = if false_loop_target.is_some() {
+                    let mut stmts = Vec::with_capacity(2);
+                    append_phi_merge_assignments(
+                        &state,
+                        local_generations.get(false_idx).unwrap(),
+                        variables,
+                        &mut stmts,
+                    );
+                    stmts.push(Stmt {
+                        kind: StmtKind::Continue,
+                    });
                     BuildPathResult {
-                        stmts: vec![Stmt {
-                            kind: StmtKind::Continue,
-                        }],
+                        stmts,
                         has_return_value,
                         state: state.clone(),
                     }
                 } else if false_is_break {
+                    let mut stmts = Vec::with_capacity(2);
+                    append_phi_merge_assignments(
+                        &state,
+                        local_generations.get(false_idx).unwrap(),
+                        variables,
+                        &mut stmts,
+                    );
+                    stmts.push(Stmt {
+                        kind: StmtKind::Break,
+                    });
                     BuildPathResult {
-                        stmts: vec![Stmt {
-                            kind: StmtKind::Break,
-                        }],
+                        stmts,
                         has_return_value,
                         state: state.clone(),
                     }
@@ -908,6 +979,9 @@ fn build_path(
                         unreachable!()
                     };
 
+                    // TODO: currently we merge the phis when we process the next block,
+                    // but we should really just do it in the places where we transfer to the next block
+                    // (call the append_phi... function)
                     let next_state = local_generations.get(common_merge_inst).unwrap();
 
                     next_state

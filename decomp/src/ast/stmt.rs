@@ -100,6 +100,13 @@ impl Variable {
         Self { flags }
     }
 
+    pub fn set_vis(&mut self, vis: VariableVisibility) {
+        match vis {
+            VariableVisibility::Visible => self.flags.insert(VariableFlags::VISIBLE),
+            VariableVisibility::Hidden => self.flags.remove(VariableFlags::VISIBLE),
+        }
+    }
+
     pub fn vis(&self) -> VariableVisibility {
         if self.flags.contains(VariableFlags::VISIBLE) {
             VariableVisibility::Visible
