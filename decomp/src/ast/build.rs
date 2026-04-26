@@ -1,4 +1,4 @@
-use std::{collections::HashSet, convert::Infallible, iter, ops::ControlFlow};
+use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
 
 use ppc32::{
     Instruction,
@@ -983,44 +983,8 @@ fn build_path(
                     // but we should really just do it in the places where we transfer to the next block
                     // (call the append_phi... function)
                     let next_state = local_generations.get(common_merge_inst).unwrap();
-
-                    next_state
-                        .registers
-                        .register_iter()
-                        .zip(iter::zip(
-                            then_state.registers.register_iter(),
-                            else_state.registers.register_iter(),
-                        ))
-                        .for_each(|((reg, next_state), ((_, then_state), (_, else_state)))| {
-                            if let Some(_) = next_state.phi_origins {
-                                let dest = variables.id_by_reg(reg, next_state.generation);
-                                let dest_vis = variables.get_vis(dest);
-
-                                if dest_vis == VariableVisibility::Visible {
-                                    if let Some(then_var) =
-                                        variables.optional_id_by_reg(reg, then_state.generation)
-                                    {
-                                        then_stmts.push(Stmt {
-                                            kind: StmtKind::Assign {
-                                                dest: Expr::var(dest),
-                                                value: Expr::var(then_var),
-                                            },
-                                        });
-                                    }
-
-                                    if let Some(else_var) =
-                                        variables.optional_id_by_reg(reg, else_state.generation)
-                                    {
-                                        else_stmts.push(Stmt {
-                                            kind: StmtKind::Assign {
-                                                dest: Expr::var(dest),
-                                                value: Expr::var(else_var),
-                                            },
-                                        });
-                                    }
-                                }
-                            }
-                        });
+                    append_phi_merge_assignments(&then_state, next_state, variables, then_stmts);
+                    append_phi_merge_assignments(&else_state, next_state, variables, else_stmts);
 
                     let next_path = build_path(
                         instructions,
