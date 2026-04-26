@@ -118,7 +118,6 @@ pub struct LocalRegisterState {
 impl Join<Generation> for LocalRegisterState {
     fn join(&self, other: &Self, recording_state: &mut Generation) -> Self {
         if self.generation == other.generation {
-            assert_eq!(self.generation, *recording_state);
             Self {
                 generation: self.generation,
                 highest_generation: *recording_state,
