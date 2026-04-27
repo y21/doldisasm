@@ -1,6 +1,6 @@
 use anyhow::Context;
-use decomp::decoder::{AddrRange, AddrRangeEnd};
 use pico_args::Arguments;
+use ppc32::decoder::{AddrRange, AddrRangeEnd};
 use std::{num::ParseIntError, path::PathBuf, str::FromStr};
 
 macro_rules! define_args {
@@ -40,7 +40,6 @@ define_args! {
     input("-i") required: PathBuf,
     addr("-x"): Option<AddrRange> = parse_addr_range,
     entrypoint("--entrypoint") exists: bool,
-    trace("--trace") exists: bool,
     headers("--headers") exists: bool,
     sections("--sections") exists: bool,
     disasm("--disasm"): Option<DisassemblyLanguage> = DisassemblyLanguage::from_str

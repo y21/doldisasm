@@ -1,11 +1,9 @@
 use core::panic;
 use std::{env, io::ErrorKind, path::PathBuf, process::ExitCode};
 
-use decomp::{
-    ast::write::StringWriter,
-    decoder::{AddrRange, AddrRangeEnd, Decoder},
-};
+use decomp::{ast::write::StringWriter, dataflow::Instructions};
 use glob::Pattern;
+use ppc32::Decoder;
 
 struct TestCase {
     name: &'static str,
@@ -239,12 +237,13 @@ fn main() -> ExitCode {
             continue;
         }
 
-        let mut decoder = Decoder::new(
-            test.code,
-            AddrRange(0, AddrRangeEnd::Bounded(test.code.len() as u32)),
-        );
+        let fn_addr = 0;
+        let instructions = Decoder::new(test.code)
+            .iter_until_eof(fn_addr)
+            .collect::<Result<Instructions, _>>()
+            .unwrap();
         let mut output = StringWriter::new();
-        decomp::decompile_into_ast_writer(&mut decoder, &mut output).unwrap();
+        decomp::decompile_into_ast_writer(&instructions, fn_addr, &mut output).unwrap();
         let output = output.into_string();
 
         let mut path = PathBuf::from("tests/output");

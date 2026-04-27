@@ -1,14 +1,13 @@
 use std::fs;
 
 use anyhow::{Context, anyhow, bail, ensure};
-use decomp::decoder::{AddrRange, AddrRangeEnd};
 use dol::Dol;
+use ppc32::decoder::{AddrRange, AddrRangeEnd};
 
 use crate::args::Args;
 
 mod args;
 mod disasm;
-mod trace;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -17,7 +16,6 @@ fn main() -> anyhow::Result<()> {
         input,
         addr,
         entrypoint,
-        trace,
         headers,
         sections,
         disasm,
@@ -49,11 +47,6 @@ fn main() -> anyhow::Result<()> {
 
     if sections {
         print_sections(&dol)?;
-        did_anything = true;
-    }
-
-    if trace {
-        trace::trace(&dol, addr()?)?;
         did_anything = true;
     }
 

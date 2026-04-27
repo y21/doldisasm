@@ -1,9 +1,7 @@
 use std::ops::{Add, Deref};
 
-use ppc32::Instruction;
+use ppc32::{Instruction, decoder::Address};
 use typed_index_collections::TiVec;
-
-use crate::decoder::Address;
 
 pub mod core;
 pub mod loops;
