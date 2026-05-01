@@ -1,3 +1,4 @@
+use core::fmt;
 use std::fmt::Debug;
 
 use crate::decoder::{DecodeError, Decoder};
@@ -905,6 +906,373 @@ impl Instruction {
 
         let visitor = Visitor { f: &mut f };
         self.visit_registers(visitor);
+    }
+
+    pub fn disasm_fmt(&self, instr_addr: u32) -> impl fmt::Display + use<'_> {
+        fmt::from_fn(move |fmt| match self {
+            Instruction::Branch { target, mode, link } => {
+                let mnemonic = if *link { "bl" } else { "b" };
+                let addr = compute_branch_target(instr_addr, *mode, *target);
+                match mode {
+                    AddressingMode::Absolute => write!(fmt, "{}a {:#x}", mnemonic, addr),
+                    AddressingMode::Relative => write!(fmt, "{} {:#x}", mnemonic, addr),
+                }
+            }
+            Instruction::Rlwnm {
+                source,
+                dest,
+                rot_bits,
+                mask_start,
+                mask_end,
+                rc,
+            } => {
+                let dot = if *rc { "." } else { "" };
+                write!(
+                    fmt,
+                    "rlwnm{} {:?},{:?},{:?},{},{}",
+                    dot, dest, source, rot_bits, mask_start.0, mask_end.0
+                )
+            }
+            Instruction::Rlwinm {
+                source,
+                dest,
+                rot_bits,
+                mask_start,
+                mask_end,
+                rc,
+            } => {
+                let dot = if *rc { "." } else { "" };
+                write!(
+                    fmt,
+                    "rlwinm{} {:?},{:?},{},{},{}",
+                    dot, dest, source, rot_bits.0, mask_start.0, mask_end.0
+                )
+            }
+            Instruction::Addis { dest, add, imm } => match add {
+                Some(gpr) => write!(fmt, "addis {:?},{:?},{}", dest, gpr, imm.0),
+                None => write!(fmt, "lis {:?},{}", dest, imm.0),
+            },
+            Instruction::Addi { dest, source, imm } => {
+                if source.0 == 0 {
+                    write!(fmt, "li {:?},{}", dest, imm.0)
+                } else {
+                    write!(fmt, "addi {:?},{:?},{}", dest, source, imm.0)
+                }
+            }
+            Instruction::Ori { source, dest, imm } => {
+                if source.0 == 0 && dest.0 == 0 && imm.0 == 0 {
+                    write!(fmt, "nop")
+                } else {
+                    write!(fmt, "ori {:?},{:?},{}", dest, source, imm.0)
+                }
+            }
+            Instruction::Cmpli {
+                source,
+                imm,
+                crf,
+                l,
+            } => {
+                if crf.0 == 0 && !l {
+                    write!(fmt, "cmplwi {:?},{}", source, imm.0)
+                } else {
+                    write!(fmt, "cmplwi cr{},{:?},{}", crf.0, source, imm.0)
+                }
+            }
+            Instruction::Cmpi { source, imm, crf } => {
+                if crf.0 == 0 {
+                    write!(fmt, "cmpwi {:?},{}", source, imm.0 as i16)
+                } else {
+                    write!(fmt, "cmpwi cr{},{:?},{}", crf.0, source, imm.0 as i16)
+                }
+            }
+            Instruction::Cmpl {
+                source_a,
+                source_b,
+                crf,
+                l: _,
+            } => {
+                if crf.0 == 0 {
+                    write!(fmt, "cmplw {:?},{:?}", source_a, source_b)
+                } else {
+                    write!(fmt, "cmplw cr{},{:?},{:?}", crf.0, source_a, source_b)
+                }
+            }
+            Instruction::Cmp {
+                source_a,
+                source_b,
+                crf,
+                l: _,
+            } => {
+                if crf.0 == 0 {
+                    write!(fmt, "cmpw {:?},{:?}", source_a, source_b)
+                } else {
+                    write!(fmt, "cmpw cr{},{:?},{:?}", crf.0, source_a, source_b)
+                }
+            }
+            Instruction::Bc {
+                bo,
+                bi,
+                target,
+                mode,
+                link,
+            } => {
+                let (crf, crb) = crb_from_index(*bi);
+                let addr = compute_branch_target(instr_addr, *mode, *target);
+                let link_suffix = if *link { "l" } else { "" };
+                let abs_suffix = if matches!(mode, AddressingMode::Absolute) {
+                    "a"
+                } else {
+                    ""
+                };
+                let crb_name = match crb {
+                    Crb::Negative => "lt",
+                    Crb::Positive => "gt",
+                    Crb::Zero => "eq",
+                    Crb::Overflow => "so",
+                };
+                match bo {
+                    BranchOptions::BranchAlways => {
+                        write!(fmt, "b{}{} {:#x}", link_suffix, abs_suffix, addr)
+                    }
+                    BranchOptions::BranchIfTrue | BranchOptions::DecCTRBranchIfTrue => {
+                        if crf.0 == 0 {
+                            write!(
+                                fmt,
+                                "b{}{}{} {:#x}",
+                                crb_name, link_suffix, abs_suffix, addr
+                            )
+                        } else {
+                            write!(
+                                fmt,
+                                "b{}{}{} cr{},{:#x}",
+                                crb_name, link_suffix, abs_suffix, crf.0, addr
+                            )
+                        }
+                    }
+                    BranchOptions::BranchIfFalse | BranchOptions::DecCTRBranchIfFalse => {
+                        let neg_crb_name = match crb {
+                            Crb::Negative => "ge",
+                            Crb::Positive => "le",
+                            Crb::Zero => "ne",
+                            Crb::Overflow => "ns",
+                        };
+                        if crf.0 == 0 {
+                            write!(
+                                fmt,
+                                "b{}{}{} {:#x}",
+                                neg_crb_name, link_suffix, abs_suffix, addr
+                            )
+                        } else {
+                            write!(
+                                fmt,
+                                "b{}{}{} cr{},{:#x}",
+                                neg_crb_name, link_suffix, abs_suffix, crf.0, addr
+                            )
+                        }
+                    }
+                    BranchOptions::DecCTRBranchIfNotZero => {
+                        write!(fmt, "bdnz{}{} {:#x}", link_suffix, abs_suffix, addr)
+                    }
+                    BranchOptions::DecCTRBranchIfZero => {
+                        write!(fmt, "bdz{}{} {:#x}", link_suffix, abs_suffix, addr)
+                    }
+                }
+            }
+            Instruction::Bclr { bo, bi, link } => {
+                let (crf, crb) = crb_from_index(*bi);
+                let link_suffix = if *link { "l" } else { "" };
+                let crb_name = match crb {
+                    Crb::Negative => "lt",
+                    Crb::Positive => "gt",
+                    Crb::Zero => "eq",
+                    Crb::Overflow => "so",
+                };
+                match bo {
+                    BranchOptions::BranchAlways => write!(fmt, "blr{}", link_suffix),
+                    BranchOptions::BranchIfTrue | BranchOptions::DecCTRBranchIfTrue => {
+                        if crf.0 == 0 {
+                            write!(fmt, "b{}lr{}", crb_name, link_suffix)
+                        } else {
+                            write!(fmt, "b{}lr{} cr{}", crb_name, link_suffix, crf.0)
+                        }
+                    }
+                    BranchOptions::BranchIfFalse | BranchOptions::DecCTRBranchIfFalse => {
+                        let neg_crb_name = match crb {
+                            Crb::Negative => "ge",
+                            Crb::Positive => "le",
+                            Crb::Zero => "ne",
+                            Crb::Overflow => "ns",
+                        };
+                        if crf.0 == 0 {
+                            write!(fmt, "b{}lr{}", neg_crb_name, link_suffix)
+                        } else {
+                            write!(fmt, "b{}lr{} cr{}", neg_crb_name, link_suffix, crf.0)
+                        }
+                    }
+                    BranchOptions::DecCTRBranchIfNotZero => write!(fmt, "bdnzlr{}", link_suffix),
+                    BranchOptions::DecCTRBranchIfZero => write!(fmt, "bdzlr{}", link_suffix),
+                }
+            }
+            Instruction::Stwu { source, dest, imm } => {
+                write!(fmt, "stwu {:?},{}({:?})", source, imm.0, dest)
+            }
+            Instruction::Stwux {
+                source,
+                dest,
+                index,
+            } => {
+                write!(fmt, "stwux {:?},{:?},{:?}", source, dest, index)
+            }
+            Instruction::Subf {
+                dest,
+                source_b,
+                source_a,
+                oe,
+                rc,
+            } => {
+                let dot = if *rc { "." } else { "" };
+                let o = if *oe { "o" } else { "" };
+                write!(
+                    fmt,
+                    "subf{}{} {:?},{:?},{:?}",
+                    o, dot, dest, source_b, source_a
+                )
+            }
+            Instruction::Subfic { dest, source, simm } => {
+                write!(fmt, "subfic {:?},{:?},{}", dest, source, simm)
+            }
+            Instruction::Subfe {
+                dest,
+                source_a,
+                source_b,
+                oe,
+                rc,
+            } => {
+                let dot = if *rc { "." } else { "" };
+                let o = if *oe { "o" } else { "" };
+                write!(
+                    fmt,
+                    "subfe{}{} {:?},{:?},{:?}",
+                    o, dot, dest, source_a, source_b
+                )
+            }
+            Instruction::Mfspr { dest, spr } => match spr {
+                Spr::Lr => write!(fmt, "mflr {:?}", dest),
+                Spr::Ctr => write!(fmt, "mfctr {:?}", dest),
+                _ => write!(fmt, "mfspr {:?},{:?}", dest, spr),
+            },
+            Instruction::Mtspr { source, spr } => match spr {
+                Spr::Lr => write!(fmt, "mtlr {:?}", source),
+                Spr::Ctr => write!(fmt, "mtctr {:?}", source),
+                _ => write!(fmt, "mtspr {:?},{:?}", spr, source),
+            },
+            Instruction::Mfmsr { dest } => {
+                write!(fmt, "mfmsr {:?}", dest)
+            }
+            Instruction::Mtmsr { source } => {
+                write!(fmt, "mtmsr {:?}", source)
+            }
+            Instruction::Or {
+                source,
+                dest,
+                or_with,
+                rc,
+            } => {
+                let dot = if *rc { "." } else { "" };
+                if source == or_with {
+                    write!(fmt, "mr{} {:?},{:?}", dot, dest, source)
+                } else {
+                    write!(fmt, "or{} {:?},{:?},{:?}", dot, dest, source, or_with)
+                }
+            }
+            Instruction::And {
+                source1,
+                source2,
+                dest,
+            } => {
+                write!(fmt, "and {:?},{:?},{:?}", dest, source1, source2)
+            }
+            Instruction::Andi { source, dest, simm } => {
+                write!(fmt, "andi. {:?},{:?},{}", dest, source, simm)
+            }
+            Instruction::Stw { source, dest, imm } => {
+                write!(fmt, "stw {:?},{}({:?})", source, imm.0, dest)
+            }
+            Instruction::Stmw { source, dest, imm } => {
+                write!(fmt, "stmw {:?},{}({:?})", source, imm.0, dest)
+            }
+            Instruction::Lwz { dest, source, imm } => {
+                write!(fmt, "lwz {:?},{}({:?})", dest, imm.0, source)
+            }
+            Instruction::Lwzu { dest, source, imm } => {
+                write!(fmt, "lwzu {:?},{}({:?})", dest, imm.0, source)
+            }
+            Instruction::Isync {} => {
+                write!(fmt, "isync")
+            }
+            Instruction::Hwsync {} => {
+                write!(fmt, "sync")
+            }
+            Instruction::Oris { source, dest, imm } => {
+                write!(fmt, "oris {:?},{:?},{}", dest, source, imm.0)
+            }
+            Instruction::Mtfsb1 { crf, rc } => {
+                let dot = if *rc { "." } else { "" };
+                write!(fmt, "mtfsb1{} {}", dot, crf.0)
+            }
+            Instruction::Lmw { source, dest, imm } => {
+                write!(fmt, "lmw {:?},{}({:?})", source, imm.0, dest)
+            }
+            Instruction::Mftb { dest, tbr } => match tbr {
+                TimeBaseRegister::Tbl => write!(fmt, "mftb {:?}", dest),
+                TimeBaseRegister::Tbu => write!(fmt, "mftbu {:?}", dest),
+            },
+            Instruction::Lhz { dest, source, imm } => {
+                write!(fmt, "lhz {:?},{}({:?})", dest, imm.0, source)
+            }
+            Instruction::Lbz { dest, source, imm } => {
+                write!(fmt, "lbz {:?},{}({:?})", dest, imm.0, source)
+            }
+            Instruction::Neg {
+                dest,
+                source,
+                rc,
+                oe,
+            } => {
+                let dot = if *rc { "." } else { "" };
+                let o = if *oe { "o" } else { "" };
+                write!(fmt, "neg{}{} {:?},{:?}", o, dot, dest, source)
+            }
+            Instruction::Crxor {
+                crb_dest,
+                crb_a,
+                crb_b,
+            } => {
+                if crb_dest == crb_a && crb_a == crb_b {
+                    write!(fmt, "crclr {}", crb_dest)
+                } else {
+                    write!(fmt, "crxor {},{},{}", crb_dest, crb_a, crb_b)
+                }
+            }
+            Instruction::Add {
+                dest,
+                source_a,
+                source_b,
+                oe,
+                rc,
+            } => {
+                let dot = if *rc { "." } else { "" };
+                let o = if *oe { "o" } else { "" };
+                write!(
+                    fmt,
+                    "add{}{} {:?},{:?},{:?}",
+                    o, dot, dest, source_a, source_b
+                )
+            }
+            Instruction::AddicRc { dest, source, simm } => {
+                write!(fmt, "addic. {:?},{:?},{}", dest, source, simm)
+            }
+        })
     }
 }
 

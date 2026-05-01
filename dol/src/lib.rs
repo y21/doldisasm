@@ -52,7 +52,8 @@ impl Dol {
             return Err(".dol file smaller than 255 bytes (does not contain all headers)");
         }
 
-        if bytes.len() > (1 << 32) {
+        #[allow(arithmetic_overflow)]
+        if size_of::<usize>() > 4 && bytes.len() > (1 << 32) {
             return Err(".dol file larger than 4 GiB (file size exceeds u32)");
         }
 
@@ -91,6 +92,11 @@ impl Dol {
 
     pub fn bss_size(&self) -> u32 {
         self.u32(Self::BSS_SIZE_OFF)
+    }
+
+    pub fn size(&self) -> u32 {
+        // We guarantee by construction that the DOL size is <= 4 GB
+        self.0.len() as u32
     }
 
     pub fn as_bytes(&self) -> &[u8] {
